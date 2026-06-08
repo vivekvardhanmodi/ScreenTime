@@ -155,8 +155,25 @@ class SessionManager:
     async def heartbeat(self):
         """Update the current session's end_time (crash resilience)."""
         async with self._lock:
+            now = time.time()
+            
+            # Detect sleep/suspend (if time jumped by more than 30s between heartbeats)
+            if hasattr(self, '_last_time'):
+                jump = now - self._last_time
+                if jump > 30.0:
+                    log.info("System sleep detected (time jump of %.1fs)", jump)
+                    # Close the session at the last known awake time
+                    if self._current_session_id is not None:
+                        self._close_current_session(self._last_time)
+                    # Start a fresh session for the wake-up time if not idle
+                    if self._current_window and not self._is_idle:
+                        self._start_session(
+                            now, self._current_window, self._current_domain, self._current_domain_title
+                        )
+
+            self._last_time = now
+
             if self._current_session_id is not None and not self._is_idle:
-                now = time.time()
                 self.db.update_session_end(self._current_session_id, now)
 
                 # Also check if Chrome URL has changed
