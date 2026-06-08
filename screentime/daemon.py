@@ -89,13 +89,14 @@ class SessionManager:
         self._current_domain: Optional[str] = None
         self._current_domain_title: Optional[str] = None
         self._is_idle = False
+        self._is_lid_closed = False
         self._lock = asyncio.Lock()
 
     async def on_window_change(self, window: Optional[WindowInfo]):
         """Handle active window change from Hyprland IPC."""
         async with self._lock:
-            if self._is_idle:
-                # If idle, just remember the new window for when we resume
+            if self._is_idle or self._is_lid_closed:
+                # If idle or lid closed, just remember the new window for when we resume
                 self._current_window = window
                 return
 
@@ -133,6 +134,9 @@ class SessionManager:
         """Handle user returning from idle."""
         async with self._lock:
             self._is_idle = False
+            if self._is_lid_closed:
+                return  # Don't resume if lid is still closed
+            
             now = time.time()
 
             # Re-query the current window since it may have changed during idle
@@ -151,6 +155,37 @@ class SessionManager:
             self._current_domain_title = domain_title
             self._start_session(now, window, domain, domain_title)
             log.info("Active: started new session for %s", window.app_class)
+
+    async def on_lid_closed(self):
+        """Handle laptop lid closing."""
+        async with self._lock:
+            self._is_lid_closed = True
+            now = time.time()
+            self._close_current_session(now)
+            log.info("Lid closed: instantly paused tracking")
+
+    async def on_lid_opened(self):
+        """Handle laptop lid opening."""
+        async with self._lock:
+            self._is_lid_closed = False
+            if self._is_idle:
+                return  # Still idle, wait for on_active
+            
+            now = time.time()
+            window = get_active_window()
+            self._current_window = window
+            if window is None:
+                return
+
+            domain = None
+            domain_title = None
+            if self._is_chrome(window):
+                domain, domain_title = read_chrome_url()
+
+            self._current_domain = domain
+            self._current_domain_title = domain_title
+            self._start_session(now, window, domain, domain_title)
+            log.info("Lid opened: resumed tracking for %s", window.app_class)
 
     async def heartbeat(self):
         """Update the current session's end_time (crash resilience)."""
@@ -318,15 +353,49 @@ async def run_daemon():
                 except asyncio.TimeoutError:
                     pass
 
+        # Lid watcher loop (polls every 1s, highly efficient)
+        async def lid_watcher_loop():
+            # Find lid path dynamically
+            import glob
+            lid_paths = glob.glob("/proc/acpi/button/lid/*/state")
+            if not lid_paths:
+                log.info("No ACPI lid switch found. Lid tracking disabled.")
+                return
+            
+            lid_path = lid_paths[0]
+            was_closed = False
+            
+            while not shutdown_event.is_set():
+                try:
+                    with open(lid_path) as f:
+                        state = f.read().strip()
+                    is_closed = "closed" in state
+                    
+                    if is_closed and not was_closed:
+                        await session_mgr.on_lid_closed()
+                    elif not is_closed and was_closed:
+                        await session_mgr.on_lid_opened()
+                        
+                    was_closed = is_closed
+                except Exception:
+                    pass
+                
+                try:
+                    await asyncio.wait_for(shutdown_event.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    pass
+
         heartbeat_task = asyncio.create_task(heartbeat_loop())
+        lid_task = asyncio.create_task(lid_watcher_loop())
 
         # Wait for shutdown signal
         await shutdown_event.wait()
 
         # Graceful shutdown
         heartbeat_task.cancel()
+        lid_task.cancel()
         try:
-            await heartbeat_task
+            await asyncio.gather(heartbeat_task, lid_task, return_exceptions=True)
         except asyncio.CancelledError:
             pass
 
