@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "screentime"
+version = "0.1.0"
+description = "Screen time tracker for Arch Linux + Hyprland"
+requires-python = ">=3.11"
+dependencies = [
+    "textual>=0.40.0",
+]
+
+[project.scripts]
+screentime = "screentime.tui.app:main"
+screentime-daemon = "screentime.daemon:main"
+
+[tool.setuptools.packages.find]
+where = ["."]

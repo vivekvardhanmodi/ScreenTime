@@ -1,0 +1,9 @@
+{
+  "name": "com.screentime.native",
+  "description": "ScreenTime Chrome URL tracker — native messaging host",
+  "path": "/home/vivek/screentime/screentime/chrome_host.py",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://EXTENSION_ID_PLACEHOLDER/"
+  ]
+}
