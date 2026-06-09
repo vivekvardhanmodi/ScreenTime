@@ -39,8 +39,7 @@ chmod +x install.sh
 The install script will:
 1. Create a Python virtual environment
 2. Install dependencies (`textual`)
-3. Set up a systemd user service (auto-starts on login)
-4. Install the Chrome native messaging host
+3. Install the Chrome native messaging host
 
 ### Set Up Chrome Extension (for website tracking)
 
@@ -59,11 +58,16 @@ The install script will:
 ### Start Tracking
 
 ```bash
-# Start the daemon (also auto-starts on login)
-systemctl --user start screentime-daemon
+# Start the daemon in the background
+~/screentime/venv/bin/screentimed &
 
 # View your stats
 ~/screentime/venv/bin/screentime
+```
+
+**Auto-start on login:** Add this to your `~/.config/hypr/hyprland.conf`:
+```conf
+exec-once = ~/screentime/venv/bin/screentimed
 ```
 
 ---
@@ -119,26 +123,17 @@ Categories are labels you assign to apps for organization (different from groups
 
 ## Daemon Management
 
+The daemon (`screentimed`) prevents multiple instances automatically.
+
 ```bash
-# Status
-systemctl --user status screentime-daemon
+# Start
+~/screentime/venv/bin/screentimed &
 
-# Start / Stop / Restart
-systemctl --user start screentime-daemon
-systemctl --user stop screentime-daemon
-systemctl --user restart screentime-daemon
+# Stop
+pkill -f screentimed
 
-# Live logs
-journalctl --user -u screentime-daemon -f
-
-# Daemon log file
-cat ~/.local/share/screentime/daemon.log
-```
-
-The daemon auto-starts on login via systemd. You can also add this to your `hyprland.conf` for extra reliability:
-
-```conf
-exec-once = systemctl --user start screentime-daemon
+# View live logs
+tail -f ~/.local/share/screentime/daemon.log
 ```
 
 ---
@@ -151,7 +146,6 @@ exec-once = systemctl --user start screentime-daemon
 | **Daemon log** | `~/.local/share/screentime/daemon.log` | Daemon debug log |
 | **Chrome URL state** | `$XDG_RUNTIME_DIR/screentime/chrome_url` | Current Chrome tab (ephemeral) |
 | **Daemon PID** | `$XDG_RUNTIME_DIR/screentime/daemon.pid` | Running daemon PID (ephemeral) |
-| **systemd service** | `~/.config/systemd/user/screentime-daemon.service` | Service unit file |
 | **Chrome native host** | `~/.config/google-chrome/NativeMessagingHosts/com.screentime.native.json` | Chrome ↔ daemon bridge config |
 | **Chrome host log** | `$XDG_RUNTIME_DIR/screentime/chrome_host.log` | Native messaging host debug log |
 
@@ -208,8 +202,6 @@ screentime/
 │   ├── manifest.json         # Manifest V3
 │   ├── background.js         # Service worker (tab tracking)
 │   └── icons/
-├── systemd/
-│   └── screentime-daemon.service
 ├── install.sh                # One-command setup
 ├── set-extension-id.sh       # Chrome extension ID helper
 └── pyproject.toml
@@ -222,7 +214,7 @@ screentime/
 ### Daemon won't start
 ```bash
 # Check logs
-journalctl --user -u screentime-daemon -n 30 --no-pager
+tail -n 30 ~/.local/share/screentime/daemon.log
 
 # Make sure Hyprland is running
 echo $HYPRLAND_INSTANCE_SIGNATURE
@@ -249,7 +241,7 @@ ls -la ~/screentime/screentime/chrome_host.py
 ### TUI shows no data
 ```bash
 # Make sure daemon is running
-systemctl --user status screentime-daemon
+pgrep -f screentimed
 
 # Check database has data
 sqlite3 ~/.local/share/screentime/screentime.db "SELECT COUNT(*) FROM sessions;"
@@ -267,13 +259,8 @@ swayidle -w timeout 10 'echo IDLE' resume 'echo ACTIVE'
 ## Uninstall
 
 ```bash
-# Stop and disable the daemon
-systemctl --user stop screentime-daemon
-systemctl --user disable screentime-daemon
-
-# Remove service file
-rm ~/.config/systemd/user/screentime-daemon.service
-systemctl --user daemon-reload
+# Stop the daemon
+pkill -f screentime
 
 # Remove Chrome native messaging host
 rm ~/.config/google-chrome/NativeMessagingHosts/com.screentime.native.json
@@ -285,6 +272,8 @@ rm -rf ~/.local/share/screentime/
 
 # Remove the project
 rm -rf ~/screentime/
+
+# Also remove from hyprland.conf if you added it!
 ```
 
 ---
@@ -292,3 +281,4 @@ rm -rf ~/screentime/
 ## License
 
 MIT
+
