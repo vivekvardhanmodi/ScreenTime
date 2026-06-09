@@ -13,7 +13,7 @@ dependencies = [
 
 [project.scripts]
 screentime = "screentime.tui.app:main"
-screentime-daemon = "screentime.daemon:main"
+screentimed = "screentime.daemon:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 #
 # ScreenTime Installation Script
-# Sets up venv, dependencies, systemd service, and Chrome native messaging host.
+# Sets up venv, dependencies, and Chrome native messaging host.
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/venv"
-SERVICE_NAME="screentime-daemon"
 NATIVE_HOST_NAME="com.screentime.native"
 
 # Colors
@@ -80,36 +79,6 @@ DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/screentime"
 mkdir -p "$DATA_DIR"
 ok "Data directory: $DATA_DIR"
 
-# ── Install systemd service ───────────────────────────────────────────
-
-info "Installing systemd user service..."
-
-SYSTEMD_DIR="$HOME/.config/systemd/user"
-mkdir -p "$SYSTEMD_DIR"
-
-# Generate service file with absolute paths
-cat > "$SYSTEMD_DIR/$SERVICE_NAME.service" << EOF
-[Unit]
-Description=ScreenTime Activity Tracker Daemon
-After=graphical-session.target
-PartOf=graphical-session.target
-
-[Service]
-Type=simple
-Environment=PYTHONPATH=$SCRIPT_DIR
-ExecStart=$VENV_DIR/bin/python -m screentime.daemon
-Restart=on-failure
-RestartSec=5
-WorkingDirectory=$SCRIPT_DIR
-
-[Install]
-WantedBy=graphical-session.target
-EOF
-
-systemctl --user daemon-reload
-systemctl --user enable "$SERVICE_NAME.service"
-ok "systemd service installed and enabled"
-
 # ── Make Chrome native messaging host executable ──────────────────────
 
 info "Setting up Chrome native messaging host..."
@@ -157,19 +126,16 @@ echo -e "     ${GREEN}sed -i 's/EXTENSION_ID_PLACEHOLDER/YOUR_EXTENSION_ID/' \\"
 echo -e "       $CHROME_NMH_DIR/$NATIVE_HOST_NAME.json${NC}"
 echo ""
 echo -e "  ${YELLOW}3. Start the daemon:${NC}"
-echo -e "     ${GREEN}systemctl --user start $SERVICE_NAME${NC}"
+echo -e "     ${GREEN}$VENV_DIR/bin/screentimed &${NC}"
 echo ""
 echo -e "  ${YELLOW}4. Launch the TUI:${NC}"
 echo -e "     ${GREEN}$VENV_DIR/bin/screentime${NC}"
 echo ""
-echo -e "  ${YELLOW}5. Auto-start on login (already enabled):${NC}"
-echo "     The daemon will start automatically on next login."
-echo "     Or add to hyprland.conf:"
-echo -e "     ${GREEN}exec-once = systemctl --user start $SERVICE_NAME${NC}"
+echo -e "  ${YELLOW}5. Auto-start on login:${NC}"
+echo "     Add this to your hyprland.conf:"
+echo -e "     ${GREEN}exec-once = $VENV_DIR/bin/screentimed${NC}"
 echo ""
 echo -e "${BLUE}Useful commands:${NC}"
-echo "  Status:  systemctl --user status $SERVICE_NAME"
-echo "  Logs:    journalctl --user -u $SERVICE_NAME -f"
-echo "  Stop:    systemctl --user stop $SERVICE_NAME"
-echo "  Restart: systemctl --user restart $SERVICE_NAME"
+echo "  Logs:  tail -f $DATA_DIR/daemon.log"
+echo "  Stop:  pkill -f screentimed"
 echo ""
