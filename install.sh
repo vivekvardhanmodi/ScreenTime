@@ -79,20 +79,20 @@ DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/screentime"
 mkdir -p "$DATA_DIR"
 ok "Data directory: $DATA_DIR"
 
-# ── Make Chrome native messaging host executable ──────────────────────
+# ── Set up native messaging host ──────────────────────────────────────
 
-info "Setting up Chrome native messaging host..."
+info "Setting up native messaging host..."
 
 chmod +x "$SCRIPT_DIR/screentime/chrome_host.py"
 
-# Install native messaging host manifest for Google Chrome
+# ── Chrome ──
 CHROME_NMH_DIR="$HOME/.config/google-chrome/NativeMessagingHosts"
 mkdir -p "$CHROME_NMH_DIR"
 
 cat > "$CHROME_NMH_DIR/$NATIVE_HOST_NAME.json" << EOF
 {
   "name": "$NATIVE_HOST_NAME",
-  "description": "ScreenTime Chrome URL tracker",
+  "description": "ScreenTime browser URL tracker",
   "path": "$SCRIPT_DIR/screentime/chrome_host.py",
   "type": "stdio",
   "allowed_origins": [
@@ -101,7 +101,25 @@ cat > "$CHROME_NMH_DIR/$NATIVE_HOST_NAME.json" << EOF
 }
 EOF
 
-ok "Native messaging host manifest installed"
+ok "Chrome native messaging host installed"
+
+# ── Firefox ──
+FIREFOX_NMH_DIR="$HOME/.mozilla/native-messaging-hosts"
+mkdir -p "$FIREFOX_NMH_DIR"
+
+cat > "$FIREFOX_NMH_DIR/$NATIVE_HOST_NAME.json" << EOF
+{
+  "name": "$NATIVE_HOST_NAME",
+  "description": "ScreenTime browser URL tracker",
+  "path": "$SCRIPT_DIR/screentime/chrome_host.py",
+  "type": "stdio",
+  "allowed_extensions": [
+    "screentime@screentime.local"
+  ]
+}
+EOF
+
+ok "Firefox native messaging host installed"
 
 # ── Print next steps ──────────────────────────────────────────────────
 

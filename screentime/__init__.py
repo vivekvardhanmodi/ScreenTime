@@ -22,6 +22,9 @@ CHROME_URL_FILE = RUNTIME_DIR / "chrome_url"
 # The Hyprland window class for Google Chrome
 CHROME_WINDOW_CLASS = "google-chrome"
 
+# The Hyprland window class for Firefox
+FIREFOX_WINDOW_CLASS = "firefox"
+
 # Idle timeout in seconds (matches hypridle.conf)
 IDLE_TIMEOUT = 90
 

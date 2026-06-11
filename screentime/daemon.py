@@ -1,10 +1,10 @@
 """ScreenTime daemon — main orchestrator.
 
-Coordinates window tracking, idle detection, and Chrome URL tracking
+Coordinates window tracking, idle detection, and browser URL tracking
 to log activity sessions into the SQLite database.
 
 Run as: python -m screentime.daemon
-Or via systemd: screentime-daemon
+Or directly: screentimed
 """
 
 import asyncio
@@ -19,6 +19,7 @@ from typing import Optional
 from screentime import (
     CHROME_URL_FILE,
     CHROME_WINDOW_CLASS,
+    FIREFOX_WINDOW_CLASS,
     HEARTBEAT_INTERVAL,
     RUNTIME_DIR,
 )
@@ -113,7 +114,7 @@ class SessionManager:
             # Check for Chrome URL
             domain = None
             domain_title = None
-            if self._is_chrome(window):
+            if self._is_browser(window):
                 domain, domain_title = read_chrome_url()
 
             self._current_domain = domain
@@ -148,7 +149,7 @@ class SessionManager:
 
             domain = None
             domain_title = None
-            if self._is_chrome(window):
+            if self._is_browser(window):
                 domain, domain_title = read_chrome_url()
 
             self._current_domain = domain
@@ -179,7 +180,7 @@ class SessionManager:
 
             domain = None
             domain_title = None
-            if self._is_chrome(window):
+            if self._is_browser(window):
                 domain, domain_title = read_chrome_url()
 
             self._current_domain = domain
@@ -212,7 +213,7 @@ class SessionManager:
                 self.db.update_session_end(self._current_session_id, now)
 
                 # Also check if Chrome URL has changed
-                if self._current_window and self._is_chrome(self._current_window):
+                if self._current_window and self._is_browser(self._current_window):
                     new_domain, new_title = read_chrome_url()
                     if new_domain != self._current_domain:
                         # Website changed within Chrome — close old session, start new
@@ -265,9 +266,10 @@ class SessionManager:
             self._current_domain_title = None
 
     @staticmethod
-    def _is_chrome(window: WindowInfo) -> bool:
-        """Check if a window is Google Chrome."""
-        return CHROME_WINDOW_CLASS in window.app_class.lower()
+    def _is_browser(window: WindowInfo) -> bool:
+        """Check if a window is a supported browser (Chrome or Firefox)."""
+        wc = window.app_class.lower()
+        return CHROME_WINDOW_CLASS in wc or FIREFOX_WINDOW_CLASS in wc
 
 
 # ── PID file ──────────────────────────────────────────────────────────

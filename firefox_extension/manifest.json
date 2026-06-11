@@ -1,0 +1,26 @@
+{
+  "manifest_version": 2,
+  "name": "ScreenTime Tracker",
+  "description": "Tracks active tab URL for ScreenTime app usage statistics",
+  "version": "1.0.0",
+  "permissions": [
+    "tabs",
+    "nativeMessaging",
+    "alarms"
+  ],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": true
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "screentime@screentime.local",
+      "strict_min_version": "91.0"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
