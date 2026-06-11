@@ -9,7 +9,7 @@ Track exactly how much time you spend in every app and website. Works entirely o
 ## What It Does
 
 - **Tracks every app** you use — terminals, editors, browsers, everything
-- **Tracks websites in Chrome** — YouTube, GitHub, Reddit show up individually, not just "Google Chrome"
+- **Tracks websites in Chrome & Firefox** — YouTube, GitHub, Reddit show up individually, not just "Google Chrome"
 - **Ignores idle time** — if you walk away, the clock stops (90s timeout, matching your hypridle config)
 - **Stores everything forever** — look up what you were doing on any date, weeks or years from now
 - **Groups apps** — combine `foot` + `kitty` into "Terminal", or `youtube.com` + YouTube PWA into "YouTube"
@@ -25,7 +25,7 @@ Track exactly how much time you spend in every app and website. Works entirely o
 - **Arch Linux with Hyprland** (Wayland compositor)
 - **Python 3.11+** (`sudo pacman -S python`)
 - **swayidle** (`sudo pacman -S swayidle`)
-- **Google Chrome** (for website tracking)
+- **Google Chrome** and/or **Firefox** (for website tracking)
 
 ### Install
 
@@ -39,12 +39,14 @@ chmod +x install.sh
 The install script will:
 1. Create a Python virtual environment
 2. Install dependencies (`textual`)
-3. Install the Chrome native messaging host
+3. Install native messaging hosts for Chrome and Firefox
 
-### Set Up Chrome Extension (for website tracking)
+### Set Up Browser Extension (for website tracking)
 
-1. Open **`chrome://extensions/`** in Google Chrome
-2. Enable **Developer mode** (toggle in top right corner)
+#### Chrome
+
+1. Open **`chrome://extensions/`**
+2. Enable **Developer mode** (top right)
 3. Click **Load unpacked** → select `~/screentime/chrome_extension/`
 4. **Copy the Extension ID** shown under the extension name
 5. Run this (replace `YOUR_ID` with the actual ID):
@@ -54,6 +56,14 @@ The install script will:
 ```
 
 6. **Restart Chrome**
+
+#### Firefox
+
+1. Open **`about:debugging#/runtime/this-firefox`**
+2. Click **Load Temporary Add-on**
+3. Select `~/screentime/firefox_extension/manifest.json`
+
+No extra ID step needed — Firefox uses a fixed extension ID.
 
 ### Start Tracking
 
@@ -145,9 +155,11 @@ tail -f ~/.local/share/screentime/daemon.log
 | **Database** | `~/.local/share/screentime/screentime.db` | All your usage data, groups, categories |
 | **Daemon log** | `~/.local/share/screentime/daemon.log` | Daemon debug log |
 | **Chrome URL state** | `$XDG_RUNTIME_DIR/screentime/chrome_url` | Current Chrome tab (ephemeral) |
+| **Firefox URL state** | `$XDG_RUNTIME_DIR/screentime/firefox_url` | Current Firefox tab (ephemeral) |
 | **Daemon PID** | `$XDG_RUNTIME_DIR/screentime/daemon.pid` | Running daemon PID (ephemeral) |
 | **Chrome native host** | `~/.config/google-chrome/NativeMessagingHosts/com.screentime.native.json` | Chrome ↔ daemon bridge config |
-| **Chrome host log** | `$XDG_RUNTIME_DIR/screentime/chrome_host.log` | Native messaging host debug log |
+| **Firefox native host** | `~/.mozilla/native-messaging-hosts/com.screentime.native.json` | Firefox ↔ daemon bridge config |
+| **Native host log** | `$XDG_RUNTIME_DIR/screentime/chrome_host.log` | Native messaging host debug log |
 
 ### Backup & Migration
 
@@ -189,7 +201,7 @@ screentime/
 │   ├── tracker.py            # Hyprland IPC window tracking
 │   ├── idle.py               # swayidle idle detection (90s timeout)
 │   ├── database.py           # SQLite operations
-│   ├── chrome_host.py        # Chrome native messaging host
+│   ├── browser_host.py       # Browser native messaging host
 │   └── tui/
 │       ├── app.py            # Main TUI application
 │       ├── utils.py          # Formatting utilities
@@ -201,6 +213,10 @@ screentime/
 ├── chrome_extension/
 │   ├── manifest.json         # Manifest V3
 │   ├── background.js         # Service worker (tab tracking)
+│   └── icons/
+├── firefox_extension/
+│   ├── manifest.json         # Manifest V2
+│   ├── background.js         # Background script (tab tracking)
 │   └── icons/
 ├── install.sh                # One-command setup
 ├── set-extension-id.sh       # Chrome extension ID helper
@@ -223,19 +239,22 @@ echo $HYPRLAND_INSTANCE_SIGNATURE
 which swayidle
 ```
 
-### Chrome websites not tracking
+### Browser websites not tracking
 ```bash
-# Check if native host is installed
+# Check if native host is installed (Chrome)
 cat ~/.config/google-chrome/NativeMessagingHosts/com.screentime.native.json
 
-# Check if extension ID is set (should NOT say EXTENSION_ID_PLACEHOLDER)
+# Check if native host is installed (Firefox)
+cat ~/.mozilla/native-messaging-hosts/com.screentime.native.json
+
+# Check if Chrome extension ID is set (should NOT say EXTENSION_ID_PLACEHOLDER)
 grep "chrome-extension" ~/.config/google-chrome/NativeMessagingHosts/com.screentime.native.json
 
 # Check native host logs
 cat $XDG_RUNTIME_DIR/screentime/chrome_host.log
 
-# Verify the chrome_host.py is executable
-ls -la ~/screentime/screentime/chrome_host.py
+# Verify the browser_host.py is executable
+ls -la ~/screentime/screentime/browser_host.py
 ```
 
 ### TUI shows no data
@@ -262,10 +281,11 @@ swayidle -w timeout 10 'echo IDLE' resume 'echo ACTIVE'
 # Stop the daemon
 pkill -f screentime
 
-# Remove Chrome native messaging host
+# Remove native messaging hosts
 rm ~/.config/google-chrome/NativeMessagingHosts/com.screentime.native.json
+rm ~/.mozilla/native-messaging-hosts/com.screentime.native.json
 
-# Remove the Chrome extension from chrome://extensions/
+# Remove browser extensions (chrome://extensions/ and about:addons)
 
 # Remove data (WARNING: deletes all your history!)
 rm -rf ~/.local/share/screentime/

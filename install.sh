@@ -83,7 +83,7 @@ ok "Data directory: $DATA_DIR"
 
 info "Setting up native messaging host..."
 
-chmod +x "$SCRIPT_DIR/screentime/chrome_host.py"
+chmod +x "$SCRIPT_DIR/screentime/browser_host.py"
 
 # ── Chrome ──
 CHROME_NMH_DIR="$HOME/.config/google-chrome/NativeMessagingHosts"
@@ -93,7 +93,7 @@ cat > "$CHROME_NMH_DIR/$NATIVE_HOST_NAME.json" << EOF
 {
   "name": "$NATIVE_HOST_NAME",
   "description": "ScreenTime browser URL tracker",
-  "path": "$SCRIPT_DIR/screentime/chrome_host.py",
+  "path": "$SCRIPT_DIR/screentime/browser_host.py",
   "type": "stdio",
   "allowed_origins": [
     "chrome-extension://EXTENSION_ID_PLACEHOLDER/"
@@ -111,7 +111,7 @@ cat > "$FIREFOX_NMH_DIR/$NATIVE_HOST_NAME.json" << EOF
 {
   "name": "$NATIVE_HOST_NAME",
   "description": "ScreenTime browser URL tracker",
-  "path": "$SCRIPT_DIR/screentime/chrome_host.py",
+  "path": "$SCRIPT_DIR/screentime/browser_host.py",
   "type": "stdio",
   "allowed_extensions": [
     "screentime@screentime.local"
