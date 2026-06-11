@@ -111,6 +111,15 @@ class SessionManager:
                 self._current_window = window
                 return
 
+            # Deduplicate: Hyprland often sends multiple activewindow events
+            # for the same window. Skip if app_class hasn't changed.
+            if (
+                window is not None
+                and self._current_window is not None
+                and window.app_class == self._current_window.app_class
+            ):
+                return
+
             now = time.time()
 
             # Close existing session if any
@@ -124,17 +133,11 @@ class SessionManager:
             # For browser windows, don't read URL immediately — the extension
             # hasn't had time to send the updated URL yet, so the state file
             # is stale. Start with domain=None and schedule a delayed read.
-            domain = None
-            domain_title = None
-            if not self._is_browser(window):
-                pass  # Non-browser apps never have a domain
-            # else: domain stays None, delayed_url_check will pick it up
-
-            self._current_domain = domain
-            self._current_domain_title = domain_title
+            self._current_domain = None
+            self._current_domain_title = None
 
             # Start new session
-            self._start_session(now, window, domain, domain_title)
+            self._start_session(now, window, None, None)
 
         # Schedule a delayed URL check for browser windows (outside the lock)
         if window and self._is_browser(window):
@@ -215,11 +218,13 @@ class SessionManager:
 
             domain, title = read_browser_url(window.app_class)
             if domain != self._current_domain:
-                now = time.time()
-                self._close_current_session(now)
+                # Update the existing session in-place (no close+reopen)
                 self._current_domain = domain
                 self._current_domain_title = title
-                self._start_session(now, window, domain, title)
+                if self._current_session_id is not None:
+                    self.db.update_session_website(
+                        self._current_session_id, domain, title
+                    )
                 log.info("Browser URL resolved to: %s", domain)
 
     async def heartbeat(self):
