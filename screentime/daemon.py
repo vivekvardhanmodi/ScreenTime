@@ -121,17 +121,24 @@ class SessionManager:
             if window is None:
                 return
 
-            # Check for browser URL
+            # For browser windows, don't read URL immediately — the extension
+            # hasn't had time to send the updated URL yet, so the state file
+            # is stale. Start with domain=None and schedule a delayed read.
             domain = None
             domain_title = None
-            if self._is_browser(window):
-                domain, domain_title = read_browser_url(window.app_class)
+            if not self._is_browser(window):
+                pass  # Non-browser apps never have a domain
+            # else: domain stays None, delayed_url_check will pick it up
 
             self._current_domain = domain
             self._current_domain_title = domain_title
 
             # Start new session
             self._start_session(now, window, domain, domain_title)
+
+        # Schedule a delayed URL check for browser windows (outside the lock)
+        if window and self._is_browser(window):
+            asyncio.create_task(self._delayed_url_check(window))
 
     async def on_idle(self):
         """Handle user going idle."""
@@ -157,15 +164,14 @@ class SessionManager:
             if window is None:
                 return
 
-            domain = None
-            domain_title = None
-            if self._is_browser(window):
-                domain, domain_title = read_browser_url(window.app_class)
-
-            self._current_domain = domain
-            self._current_domain_title = domain_title
-            self._start_session(now, window, domain, domain_title)
+            self._current_domain = None
+            self._current_domain_title = None
+            self._start_session(now, window, None, None)
             log.info("Active: started new session for %s", window.app_class)
+
+        # Schedule delayed URL check for browser windows
+        if window and self._is_browser(window):
+            asyncio.create_task(self._delayed_url_check(window))
 
     async def on_lid_closed(self):
         """Handle laptop lid closing."""
@@ -188,15 +194,33 @@ class SessionManager:
             if window is None:
                 return
 
-            domain = None
-            domain_title = None
-            if self._is_browser(window):
-                domain, domain_title = read_browser_url(window.app_class)
-
-            self._current_domain = domain
-            self._current_domain_title = domain_title
-            self._start_session(now, window, domain, domain_title)
+            self._current_domain = None
+            self._current_domain_title = None
+            self._start_session(now, window, None, None)
             log.info("Lid opened: resumed tracking for %s", window.app_class)
+
+        # Schedule delayed URL check for browser windows
+        if window and self._is_browser(window):
+            asyncio.create_task(self._delayed_url_check(window))
+
+    async def _delayed_url_check(self, window: WindowInfo):
+        """Wait briefly for the browser extension to update, then read the URL."""
+        await asyncio.sleep(0.5)
+        async with self._lock:
+            # Bail out if the window has changed since we scheduled this
+            if self._current_window != window:
+                return
+            if self._is_idle or self._is_lid_closed:
+                return
+
+            domain, title = read_browser_url(window.app_class)
+            if domain != self._current_domain:
+                now = time.time()
+                self._close_current_session(now)
+                self._current_domain = domain
+                self._current_domain_title = title
+                self._start_session(now, window, domain, title)
+                log.info("Browser URL resolved to: %s", domain)
 
     async def heartbeat(self):
         """Update the current session's end_time (crash resilience)."""
