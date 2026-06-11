@@ -54,6 +54,7 @@ function sendUrlUpdate(domain, title) {
     try {
       port.postMessage({
         type: "url_update",
+        source: "chrome",
         domain: domain,
         title: title,
       });

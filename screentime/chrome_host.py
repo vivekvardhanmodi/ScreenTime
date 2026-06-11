@@ -26,7 +26,10 @@ def get_runtime_dir() -> Path:
     return d
 
 
-CHROME_URL_FILE = get_runtime_dir() / "chrome_url"
+BROWSER_URL_FILES = {
+    "chrome": get_runtime_dir() / "chrome_url",
+    "firefox": get_runtime_dir() / "firefox_url",
+}
 LOG_FILE = get_runtime_dir() / "chrome_host.log"
 
 
@@ -61,45 +64,54 @@ def send_message(message: dict):
     sys.stdout.buffer.flush()
 
 
-def write_url_state(domain: str | None, title: str | None):
-    """Write the current Chrome URL state to the shared file."""
+def write_url_state(source: str, domain: str | None, title: str | None):
+    """Write the current browser URL state to the shared file."""
+    url_file = BROWSER_URL_FILES.get(source, BROWSER_URL_FILES["chrome"])
     state = {
         "domain": domain,
         "title": title,
         "pid": os.getpid(),
     }
     # Atomic write: write to temp file then rename
-    tmp_file = CHROME_URL_FILE.with_suffix(".tmp")
+    tmp_file = url_file.with_suffix(".tmp")
     with open(tmp_file, "w") as f:
         json.dump(state, f)
-    tmp_file.rename(CHROME_URL_FILE)
+    tmp_file.rename(url_file)
 
 
-def clear_url_state():
-    """Clear the URL state file when Chrome disconnects."""
+def clear_url_state(source: str | None = None):
+    """Clear the URL state file(s) when browser disconnects."""
     try:
-        CHROME_URL_FILE.unlink(missing_ok=True)
+        if source and source in BROWSER_URL_FILES:
+            BROWSER_URL_FILES[source].unlink(missing_ok=True)
+        else:
+            # Clear all
+            for f in BROWSER_URL_FILES.values():
+                f.unlink(missing_ok=True)
     except Exception:
         pass
 
 
 def main():
-    """Main loop: read messages from Chrome, update state file."""
+    """Main loop: read messages from browser, update state file."""
     log("Native messaging host started")
+
+    source = None  # Will be set from first url_update message
 
     try:
         while True:
             message = read_message()
             if message is None:
-                log("Chrome disconnected (stdin closed)")
+                log("Browser disconnected (stdin closed)")
                 break
 
             msg_type = message.get("type", "")
 
             if msg_type == "url_update":
+                source = message.get("source", "chrome")
                 domain = message.get("domain")
                 title = message.get("title")
-                write_url_state(domain, title)
+                write_url_state(source, domain, title)
                 send_message({"status": "ok"})
 
             elif msg_type == "ping":
@@ -112,7 +124,7 @@ def main():
     except Exception as e:
         log(f"Error: {e}")
     finally:
-        clear_url_state()
+        clear_url_state(source)
         log("Native messaging host exiting")
 
 

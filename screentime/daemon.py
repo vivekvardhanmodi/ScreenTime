@@ -17,7 +17,6 @@ import time
 from typing import Optional
 
 from screentime import (
-    CHROME_URL_FILE,
     CHROME_WINDOW_CLASS,
     FIREFOX_WINDOW_CLASS,
     HEARTBEAT_INTERVAL,
@@ -26,6 +25,8 @@ from screentime import (
 from screentime.database import Database
 from screentime.idle import IdleDetector
 from screentime.tracker import HyprlandTracker, WindowInfo, get_active_window
+
+from pathlib import Path
 
 # ── Logging setup ─────────────────────────────────────────────────────
 
@@ -55,18 +56,27 @@ def setup_logging():
 log = logging.getLogger(__name__)
 
 
-# ── Chrome URL reader ─────────────────────────────────────────────────
+# ── Browser URL reader ────────────────────────────────────────────────
 
-def read_chrome_url() -> tuple[Optional[str], Optional[str]]:
-    """Read the current Chrome tab URL from the state file.
+def _browser_url_file(window_class: str) -> Path:
+    """Get the URL state file path for the given browser window class."""
+    wc = window_class.lower()
+    if FIREFOX_WINDOW_CLASS in wc:
+        return RUNTIME_DIR / "firefox_url"
+    return RUNTIME_DIR / "chrome_url"
+
+
+def read_browser_url(window_class: str) -> tuple[Optional[str], Optional[str]]:
+    """Read the current browser tab URL from the state file.
 
     Returns (domain, title) or (None, None) if unavailable.
     """
     try:
-        if not CHROME_URL_FILE.exists():
+        url_file = _browser_url_file(window_class)
+        if not url_file.exists():
             return None, None
 
-        with open(CHROME_URL_FILE) as f:
+        with open(url_file) as f:
             data = json.load(f)
 
         return data.get("domain"), data.get("title")
@@ -111,11 +121,11 @@ class SessionManager:
             if window is None:
                 return
 
-            # Check for Chrome URL
+            # Check for browser URL
             domain = None
             domain_title = None
             if self._is_browser(window):
-                domain, domain_title = read_chrome_url()
+                domain, domain_title = read_browser_url(window.app_class)
 
             self._current_domain = domain
             self._current_domain_title = domain_title
@@ -150,7 +160,7 @@ class SessionManager:
             domain = None
             domain_title = None
             if self._is_browser(window):
-                domain, domain_title = read_chrome_url()
+                domain, domain_title = read_browser_url(window.app_class)
 
             self._current_domain = domain
             self._current_domain_title = domain_title
@@ -181,7 +191,7 @@ class SessionManager:
             domain = None
             domain_title = None
             if self._is_browser(window):
-                domain, domain_title = read_chrome_url()
+                domain, domain_title = read_browser_url(window.app_class)
 
             self._current_domain = domain
             self._current_domain_title = domain_title
@@ -212,11 +222,11 @@ class SessionManager:
             if self._current_session_id is not None and not self._is_idle:
                 self.db.update_session_end(self._current_session_id, now)
 
-                # Also check if Chrome URL has changed
+                # Also check if browser URL has changed
                 if self._current_window and self._is_browser(self._current_window):
-                    new_domain, new_title = read_chrome_url()
+                    new_domain, new_title = read_browser_url(self._current_window.app_class)
                     if new_domain != self._current_domain:
-                        # Website changed within Chrome — close old session, start new
+                        # Website changed within browser — close old session, start new
                         self._close_current_session(now)
                         self._current_domain = new_domain
                         self._current_domain_title = new_title

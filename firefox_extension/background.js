@@ -55,6 +55,7 @@ function sendUrlUpdate(domain, title) {
     try {
       port.postMessage({
         type: "url_update",
+        source: "firefox",
         domain: domain,
         title: title,
       });
