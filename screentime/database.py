@@ -11,8 +11,23 @@ from dataclasses import dataclass
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from screentime import DB_PATH
+
+
+def extract_domain(url: str) -> Optional[str]:
+    """Extract the base domain from a URL."""
+    if not url:
+        return None
+    try:
+        parsed = urlparse(url)
+        domain = parsed.hostname or parsed.path
+        if domain and domain.startswith("www."):
+            domain = domain[4:]
+        return domain
+    except Exception:
+        return url
 
 
 @dataclass
@@ -33,7 +48,10 @@ class Session:
     @property
     def display_name(self) -> str:
         """Human-readable name: website domain if available, else app class."""
-        return self.website_url or self.app_class
+        if self.website_url:
+            domain = extract_domain(self.website_url)
+            return domain or self.app_class
+        return self.app_class
 
 
 @dataclass
@@ -271,7 +289,8 @@ class Database:
                 continue
 
             if row["website_url"]:
-                key = (row["website_url"], "website")
+                domain = extract_domain(row["website_url"]) or row["website_url"]
+                key = (domain, "website")
             else:
                 key = (row["app_class"], "app")
 
