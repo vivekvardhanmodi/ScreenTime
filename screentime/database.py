@@ -24,7 +24,6 @@ class Session:
     app_class: str
     app_title: Optional[str]
     website_url: Optional[str]
-    website_title: Optional[str]
 
     @property
     def duration(self) -> float:
@@ -179,15 +178,14 @@ class Database:
         app_class: str,
         app_title: Optional[str] = None,
         website_url: Optional[str] = None,
-        website_title: Optional[str] = None,
     ) -> int:
         """Insert a new session. Returns the session ID."""
         with self._connect() as conn:
             cursor = conn.execute(
                 """INSERT INTO sessions
-                   (start_time, end_time, app_class, app_title, website_url, website_title)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (start_time, end_time, app_class, app_title, website_url, website_title),
+                   (start_time, end_time, app_class, app_title, website_url)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (start_time, end_time, app_class, app_title, website_url),
             )
             return cursor.lastrowid
 
@@ -200,13 +198,13 @@ class Database:
             )
 
     def update_session_website(
-        self, session_id: int, website_url: Optional[str], website_title: Optional[str]
+        self, session_id: int, website_url: Optional[str]
     ):
-        """Update website info for a session (when Chrome tab changes without window change)."""
+        """Update website URL for a session (when browser tab changes without window change)."""
         with self._connect() as conn:
             conn.execute(
-                "UPDATE sessions SET website_url = ?, website_title = ? WHERE id = ?",
-                (website_url, website_title, session_id),
+                "UPDATE sessions SET website_url = ? WHERE id = ?",
+                (website_url, session_id),
             )
 
     def close_session(self, session_id: int, end_time: float):
@@ -532,7 +530,6 @@ class Database:
                 "app_class",
                 "app_title",
                 "website_url",
-                "website_title",
                 "category",
                 "group",
             ])
@@ -550,7 +547,6 @@ class Database:
                     row["app_class"],
                     row["app_title"] or "",
                     row["website_url"] or "",
-                    row["website_title"] or "",
                     category,
                     group,
                 ])

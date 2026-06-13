@@ -66,22 +66,22 @@ def _browser_url_file(window_class: str) -> Path:
     return RUNTIME_DIR / "chrome_url"
 
 
-def read_browser_url(window_class: str) -> tuple[Optional[str], Optional[str]]:
+def read_browser_url(window_class: str) -> Optional[str]:
     """Read the current browser tab URL from the state file.
 
-    Returns (url, title) or (None, None) if unavailable.
+    Returns url or None if unavailable.
     """
     try:
         url_file = _browser_url_file(window_class)
         if not url_file.exists():
-            return None, None
+            return None
 
         with open(url_file) as f:
             data = json.load(f)
 
-        return data.get("url"), data.get("title")
+        return data.get("url")
     except (json.JSONDecodeError, IOError, KeyError):
-        return None, None
+        return None
 
 
 # ── Session Manager ───────────────────────────────────────────────────
@@ -99,7 +99,6 @@ class SessionManager:
         self._current_session_app_class: Optional[str] = None
         self._current_window: Optional[WindowInfo] = None
         self._current_url: Optional[str] = None
-        self._current_url_title: Optional[str] = None
         self._is_idle = False
         self._is_lid_closed = False
         self._lock = asyncio.Lock()
@@ -153,10 +152,9 @@ class SessionManager:
             # hasn't had time to send the updated URL yet, so the state file
             # is stale. Start with url=None and schedule a delayed read.
             self._current_url = None
-            self._current_url_title = None
 
             # Start new session
-            self._start_session(now, window, effective_class, None, None)
+            self._start_session(now, window, effective_class, None)
 
         # Manage the browser URL watcher (outside the lock)
         if window and self._is_browser(window):
@@ -194,8 +192,7 @@ class SessionManager:
             effective_class = self._resolve_app_class(window)
             self._current_session_app_class = effective_class
             self._current_url = None
-            self._current_url_title = None
-            self._start_session(now, window, effective_class, None, None)
+            self._start_session(now, window, effective_class, None)
             log.info("Active: started new session for %s (effective: %s)", window.app_class, effective_class)
 
         # Schedule delayed URL check for browser windows
@@ -226,8 +223,7 @@ class SessionManager:
             effective_class = self._resolve_app_class(window)
             self._current_session_app_class = effective_class
             self._current_url = None
-            self._current_url_title = None
-            self._start_session(now, window, effective_class, None, None)
+            self._start_session(now, window, effective_class, None)
             log.info("Lid opened: resumed tracking for %s (effective: %s)", window.app_class, effective_class)
 
         # Schedule delayed URL check for browser windows
@@ -244,14 +240,13 @@ class SessionManager:
             if self._is_idle or self._is_lid_closed:
                 return
 
-            url, title = read_browser_url(window.app_class)
+            url = read_browser_url(window.app_class)
             if url != self._current_url:
                 # Update the existing session in-place (no close+reopen)
                 self._current_url = url
-                self._current_url_title = title
                 if self._current_session_id is not None:
                     self.db.update_session_website(
-                        self._current_session_id, url, title
+                        self._current_session_id, url
                     )
                 log.info("Browser URL resolved to: %s", url)
 
@@ -270,18 +265,17 @@ class SessionManager:
             return
 
         now = time.time()
-        new_url, new_title = read_browser_url(self._current_window.app_class)
+        new_url = read_browser_url(self._current_window.app_class)
         if new_url != self._current_url:
             # Website changed within browser — close old session, start new
             self._close_current_session(now)
             self._current_url = new_url
-            self._current_url_title = new_title
             # Re-query Hyprland for the fresh window title
             fresh_window = get_active_window()
             if fresh_window:
                 self._current_window = fresh_window
             self._start_session(
-                now, self._current_window, self._current_session_app_class, new_url, new_title
+                now, self._current_window, self._current_session_app_class, new_url
             )
             log.info("Browser URL changed to: %s", new_url)
 
@@ -326,7 +320,7 @@ class SessionManager:
                     # Start a fresh session for the wake-up time if not idle
                     if self._current_window and not self._is_idle:
                         self._start_session(
-                            now, self._current_window, self._current_session_app_class, self._current_url, self._current_url_title
+                            now, self._current_window, self._current_session_app_class, self._current_url
                         )
 
             self._last_time = now
@@ -349,7 +343,6 @@ class SessionManager:
         window: WindowInfo,
         effective_class: str,
         url: Optional[str],
-        url_title: Optional[str],
     ):
         """Start a new session in the database."""
         self._current_session_id = self.db.insert_session(
@@ -358,7 +351,6 @@ class SessionManager:
             app_class=effective_class,
             app_title=window.title,
             website_url=url,
-            website_title=url_title,
         )
         log.debug(
             "Session started: id=%d app=%s url=%s",
@@ -374,13 +366,16 @@ class SessionManager:
             log.debug("Session closed: id=%d", self._current_session_id)
             self._current_session_id = None
             self._current_url = None
-            self._current_url_title = None
 
     @staticmethod
     def _is_browser(window: WindowInfo) -> bool:
-        """Check if a window is a supported browser (Chrome or Firefox)."""
+        """Check if a window is a supported browser (Chrome, Chrome PWA, or Firefox)."""
         wc = window.app_class.lower()
-        return CHROME_WINDOW_CLASS in wc or FIREFOX_WINDOW_CLASS in wc
+        return (
+            CHROME_WINDOW_CLASS in wc
+            or wc.startswith("chrome-")
+            or FIREFOX_WINDOW_CLASS in wc
+        )
 
 
 # ── PID file ──────────────────────────────────────────────────────────
