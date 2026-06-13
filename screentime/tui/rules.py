@@ -8,7 +8,6 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
-    Select,
 )
 
 from screentime.database import Database
@@ -45,11 +44,11 @@ class RulesPane(Vertical):
     }
 
     .form-row {
-        height: 3;
+        height: auto;
         margin-bottom: 1;
     }
 
-    #app-select {
+    #app-input {
         width: 30%;
     }
 

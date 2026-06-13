@@ -55,7 +55,7 @@ function sendUrlUpdate(url, title) {
       port.postMessage({
         type: "url_update",
         source: "chrome",
-        url: domain,
+        url: url,
         title: title,
       });
     } catch (e) {
@@ -120,7 +120,7 @@ async function updateCurrentTab() {
 
     // Only send update if domain changed
     if (url !== currentUrl || title !== currentTitle) {
-      currentUrl = domain;
+      currentUrl = url;
       currentTitle = title;
       sendUrlUpdate(url, title);
     }
@@ -143,7 +143,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       const title = extractTitle(tab.title, url);
 
       if (url !== currentUrl || title !== currentTitle) {
-        currentUrl = domain;
+        currentUrl = url;
         currentTitle = title;
         sendUrlUpdate(url, title);
       }
