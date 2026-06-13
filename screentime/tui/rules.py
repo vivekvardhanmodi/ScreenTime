@@ -85,12 +85,12 @@ class RulesPane(Vertical):
         yield Label("🛠️ Title Splitting Rules", classes="panel-title")
         yield Label(
             "Split specific window titles into their own standalone apps.\n"
-            "Example: Select 'kitty' and add 'nvim' to track Neovim separately.",
+            "Example: Type 'kitty' and add 'nvim' to track Neovim separately.",
             classes="text-muted"
         )
 
         yield Horizontal(
-            Select([], id="app-select", prompt="Select App..."),
+            Input(placeholder="App Class (e.g. kitty)", id="app-input"),
             Input(placeholder="Target Title (e.g. nvim)", id="title-input"),
             Button("Add Rule", id="btn-add-rule", variant="success"),
             classes="form-row"
@@ -105,15 +105,7 @@ class RulesPane(Vertical):
         self._refresh_data()
 
     def _refresh_data(self):
-        """Reload apps and rules from database."""
-        # Update app select
-        all_apps = self.db.get_all_app_identifiers()
-        # Filter for 'app' only (no websites)
-        app_classes = sorted({a[0] for a in all_apps if a[1] == "app"})
-        
-        select = self.query_one("#app-select", Select)
-        select.set_options([(app, app) for app in app_classes])
-
+        """Reload rules from database."""
         # Update rules list
         rules = self.db.get_title_rules()
         list_view = self.query_one("#rules-list", ListView)
@@ -126,15 +118,16 @@ class RulesPane(Vertical):
     def on_button_pressed(self, event: Button.Pressed):
         """Handle button presses."""
         if event.button.id == "btn-add-rule":
-            select = self.query_one("#app-select", Select)
-            input_widget = self.query_one("#title-input", Input)
+            app_input = self.query_one("#app-input", Input)
+            title_input = self.query_one("#title-input", Input)
             
-            app_class = select.value
-            target_title = input_widget.value.strip()
+            app_class = app_input.value.strip()
+            target_title = title_input.value.strip()
 
             if app_class and target_title:
                 self.db.add_title_rule(app_class, target_title)
-                input_widget.value = ""
+                title_input.value = ""
+                app_input.value = ""
                 self._refresh_data()
 
         elif event.button.id == "btn-remove-rule":
