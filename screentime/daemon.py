@@ -281,6 +281,10 @@ class SessionManager:
                         self._close_current_session(now)
                         self._current_url = new_url
                         self._current_url_title = new_title
+                        # Re-query Hyprland for the fresh window title
+                        fresh_window = get_active_window()
+                        if fresh_window:
+                            self._current_window = fresh_window
                         self._start_session(
                             now, self._current_window, self._current_session_app_class, new_url, new_title
                         )

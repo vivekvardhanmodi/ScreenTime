@@ -8,6 +8,7 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    Static,
 )
 
 from screentime.database import Database
@@ -22,11 +23,7 @@ class RuleItem(ListItem):
         self.target_title = target_title
 
     def compose(self) -> ComposeResult:
-        yield Horizontal(
-            Label(f"{self.app_class} → {self.target_title}", classes="rule-label"),
-            Button("Remove", id="btn-remove-rule", variant="error"),
-            classes="rule-row",
-        )
+        yield Label(f"  {self.app_class}  →  {self.target_title}")
 
 
 class RulesPane(Vertical):
@@ -37,42 +34,29 @@ class RulesPane(Vertical):
         padding: 1 2;
     }
 
-    .panel-title {
-        text-style: bold;
-        color: $accent;
+    .rules-description {
+        color: $text-muted;
         margin-bottom: 1;
     }
 
-    .form-row {
-        height: auto;
+    .rules-form-label {
+        margin-bottom: 0;
+        color: $text;
+    }
+
+    #app-input, #title-input {
         margin-bottom: 1;
-    }
-
-    #app-input {
-        width: 30%;
-    }
-
-    #title-input {
-        width: 1fr;
-        margin-left: 1;
     }
 
     #btn-add-rule {
-        margin-left: 1;
+        margin-bottom: 1;
+        width: 100%;
     }
 
-    .rule-row {
-        height: 3;
-        align: left middle;
-    }
-
-    .rule-label {
-        width: 1fr;
-        content-align: left middle;
-    }
-
-    #btn-remove-rule {
-        margin-left: 1;
+    .rules-section-title {
+        color: $accent;
+        text-style: bold;
+        margin: 1 0 0 0;
     }
     """
 
@@ -81,31 +65,27 @@ class RulesPane(Vertical):
         self.db = db
 
     def compose(self) -> ComposeResult:
-        yield Label("🛠️ Title Splitting Rules", classes="panel-title")
+        yield Label("🛠️ Title Splitting Rules", classes="section-title")
         yield Label(
-            "Split specific window titles into their own standalone apps.\n"
-            "Example: Type 'kitty' and add 'nvim' to track Neovim separately.",
-            classes="text-muted"
+            "Split specific window titles into their own apps.\n"
+            "Example: Type 'kitty' as App Class and 'nvim' as Target Title.",
+            classes="rules-description"
         )
 
-        yield Horizontal(
-            Input(placeholder="App Class (e.g. kitty)", id="app-input"),
-            Input(placeholder="Target Title (e.g. nvim)", id="title-input"),
-            Button("Add Rule", id="btn-add-rule", variant="success"),
-            classes="form-row"
-        )
+        yield Label("App Class (e.g. kitty):", classes="rules-form-label")
+        yield Input(placeholder="kitty", id="app-input")
+        yield Label("Target Title (e.g. nvim):", classes="rules-form-label")
+        yield Input(placeholder="nvim", id="title-input")
+        yield Button("Add Rule", id="btn-add-rule", variant="success")
 
-        yield VerticalScroll(
-            ListView(id="rules-list"),
-            id="rules-container"
-        )
+        yield Label("Current Rules:", classes="rules-section-title")
+        yield ListView(id="rules-list")
 
     def on_mount(self):
         self._refresh_data()
 
     def _refresh_data(self):
         """Reload rules from database."""
-        # Update rules list
         rules = self.db.get_title_rules()
         list_view = self.query_one("#rules-list", ListView)
         list_view.clear()
@@ -119,7 +99,7 @@ class RulesPane(Vertical):
         if event.button.id == "btn-add-rule":
             app_input = self.query_one("#app-input", Input)
             title_input = self.query_one("#title-input", Input)
-            
+
             app_class = app_input.value.strip()
             target_title = title_input.value.strip()
 
@@ -129,10 +109,9 @@ class RulesPane(Vertical):
                 app_input.value = ""
                 self._refresh_data()
 
-        elif event.button.id == "btn-remove-rule":
-            item = event.button.parent
-            if isinstance(item, Horizontal):
-                rule_item = item.parent
-                if isinstance(rule_item, RuleItem):
-                    self.db.remove_title_rule(rule_item.app_class, rule_item.target_title)
-                    self._refresh_data()
+    def on_list_view_selected(self, event: ListView.Selected):
+        """Handle clicking a rule to remove it."""
+        item = event.item
+        if isinstance(item, RuleItem):
+            self.db.remove_title_rule(item.app_class, item.target_title)
+            self._refresh_data()

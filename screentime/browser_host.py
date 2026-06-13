@@ -111,6 +111,7 @@ def main():
                 source = message.get("source", "chrome")
                 url = message.get("url")
                 title = message.get("title")
+                log(f"[{source}] url_update: url={url}, title={title}")
                 write_url_state(source, url, title)
                 send_message({"status": "ok"})
 
