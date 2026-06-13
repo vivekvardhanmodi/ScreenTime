@@ -25,6 +25,7 @@ from screentime.tui.dashboard import DashboardPane
 from screentime.tui.history import DailyPane, WeeklyPane, MonthlyPane
 from screentime.tui.categories import CategoriesPane
 from screentime.tui.groups import GroupsPane
+from screentime.tui.rules import RulesPane
 from screentime.tui.export import ExportPane
 
 
@@ -243,6 +244,8 @@ class ScreenTimeApp(App):
                 yield MonthlyPane(self.db)
             with TabPane("Groups", id="tab-groups"):
                 yield GroupsPane(self.db)
+            with TabPane("Title Rules", id="tab-rules"):
+                yield RulesPane(self.db)
             with TabPane("Categories", id="tab-categories"):
                 yield CategoriesPane(self.db)
             with TabPane("Export", id="tab-export"):

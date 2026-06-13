@@ -23,7 +23,7 @@ class Session:
     end_time: float
     app_class: str
     app_title: Optional[str]
-    website_domain: Optional[str]
+    website_url: Optional[str]
     website_title: Optional[str]
 
     @property
@@ -34,7 +34,7 @@ class Session:
     @property
     def display_name(self) -> str:
         """Human-readable name: website domain if available, else app class."""
-        return self.website_domain or self.app_class
+        return self.website_url or self.app_class
 
 
 @dataclass
@@ -80,6 +80,15 @@ class Database:
     def _init_db(self):
         """Initialize database schema."""
         with self._connect() as conn:
+            # Safely rename website_domain to website_url if it exists
+            cursor = conn.execute("PRAGMA table_info(sessions)")
+            columns = [row["name"] for row in cursor.fetchall()]
+            if "website_domain" in columns:
+                try:
+                    conn.execute("ALTER TABLE sessions RENAME COLUMN website_domain TO website_url")
+                except sqlite3.OperationalError:
+                    pass
+
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,7 +96,7 @@ class Database:
                     end_time REAL NOT NULL,
                     app_class TEXT NOT NULL,
                     app_title TEXT,
-                    website_domain TEXT,
+                    website_url TEXT,
                     website_title TEXT
                 );
 
@@ -95,8 +104,14 @@ class Database:
                     ON sessions(start_time, end_time);
                 CREATE INDEX IF NOT EXISTS idx_sessions_app
                     ON sessions(app_class);
-                CREATE INDEX IF NOT EXISTS idx_sessions_domain
-                    ON sessions(website_domain);
+                CREATE INDEX IF NOT EXISTS idx_sessions_url
+                    ON sessions(website_url);
+
+                CREATE TABLE IF NOT EXISTS title_rules (
+                    app_class TEXT NOT NULL,
+                    target_title TEXT NOT NULL,
+                    PRIMARY KEY(app_class, target_title)
+                );
 
                 CREATE TABLE IF NOT EXISTS categories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,6 +141,35 @@ class Database:
                     ON app_groups(app_identifier);
             """)
 
+    # ── Title Rules ───────────────────────────────────────────────────
+
+    def get_title_rules(self) -> dict[str, list[str]]:
+        """Get all title splitting rules: {app_class: [target_titles]}."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT app_class, target_title FROM title_rules ORDER BY app_class, target_title"
+            ).fetchall()
+        rules: dict[str, list[str]] = {}
+        for r in rows:
+            rules.setdefault(r["app_class"], []).append(r["target_title"])
+        return rules
+
+    def add_title_rule(self, app_class: str, target_title: str):
+        """Add a target title rule for an app."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO title_rules (app_class, target_title) VALUES (?, ?)",
+                (app_class, target_title)
+            )
+
+    def remove_title_rule(self, app_class: str, target_title: str):
+        """Remove a target title rule for an app."""
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM title_rules WHERE app_class = ? AND target_title = ?",
+                (app_class, target_title)
+            )
+
     # ── Session operations ────────────────────────────────────────────
 
     def insert_session(
@@ -134,16 +178,16 @@ class Database:
         end_time: float,
         app_class: str,
         app_title: Optional[str] = None,
-        website_domain: Optional[str] = None,
+        website_url: Optional[str] = None,
         website_title: Optional[str] = None,
     ) -> int:
         """Insert a new session. Returns the session ID."""
         with self._connect() as conn:
             cursor = conn.execute(
                 """INSERT INTO sessions
-                   (start_time, end_time, app_class, app_title, website_domain, website_title)
+                   (start_time, end_time, app_class, app_title, website_url, website_title)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (start_time, end_time, app_class, app_title, website_domain, website_title),
+                (start_time, end_time, app_class, app_title, website_url, website_title),
             )
             return cursor.lastrowid
 
@@ -156,13 +200,13 @@ class Database:
             )
 
     def update_session_website(
-        self, session_id: int, website_domain: Optional[str], website_title: Optional[str]
+        self, session_id: int, website_url: Optional[str], website_title: Optional[str]
     ):
         """Update website info for a session (when Chrome tab changes without window change)."""
         with self._connect() as conn:
             conn.execute(
-                "UPDATE sessions SET website_domain = ?, website_title = ? WHERE id = ?",
-                (website_domain, website_title, session_id),
+                "UPDATE sessions SET website_url = ?, website_title = ? WHERE id = ?",
+                (website_url, website_title, session_id),
             )
 
     def close_session(self, session_id: int, end_time: float):
@@ -208,7 +252,7 @@ class Database:
         with self._connect() as conn:
             # Fetch all sessions that overlap with the range
             rows = conn.execute(
-                """SELECT app_class, website_domain,
+                """SELECT app_class, website_url,
                           start_time, end_time
                    FROM sessions
                    WHERE end_time > ? AND start_time < ?
@@ -216,7 +260,7 @@ class Database:
                 (start_ts, end_ts),
             ).fetchall()
 
-        # Aggregate by effective identifier (website_domain or app_class)
+        # Aggregate by effective identifier (website_url or app_class)
         usage_map: dict[tuple[str, str], float] = {}  # (name, type) -> seconds
 
         for row in rows:
@@ -228,8 +272,8 @@ class Database:
             if duration <= 0:
                 continue
 
-            if row["website_domain"]:
-                key = (row["website_domain"], "website")
+            if row["website_url"]:
+                key = (row["website_url"], "website")
             else:
                 key = (row["app_class"], "app")
 
@@ -309,11 +353,11 @@ class Database:
             ).fetchall()
             # Get website domains
             web_rows = conn.execute(
-                "SELECT DISTINCT website_domain FROM sessions WHERE website_domain IS NOT NULL ORDER BY website_domain"
+                "SELECT DISTINCT website_url FROM sessions WHERE website_url IS NOT NULL ORDER BY website_url"
             ).fetchall()
 
         result = [(r["app_class"], "app") for r in app_rows]
-        result += [(r["website_domain"], "website") for r in web_rows]
+        result += [(r["website_url"], "website") for r in web_rows]
         return result
 
     def get_available_dates(self) -> tuple[Optional[date], Optional[date]]:
@@ -487,7 +531,7 @@ class Database:
                 "duration_seconds",
                 "app_class",
                 "app_title",
-                "website_domain",
+                "website_url",
                 "website_title",
                 "category",
                 "group",
@@ -495,7 +539,7 @@ class Database:
 
             for row in rows:
                 duration = row["end_time"] - row["start_time"]
-                identifier = row["website_domain"] or row["app_class"]
+                identifier = row["website_url"] or row["app_class"]
                 category = category_map.get(identifier, "Uncategorized")
                 group = group_map.get(identifier, "")
 
@@ -505,7 +549,7 @@ class Database:
                     f"{duration:.1f}",
                     row["app_class"],
                     row["app_title"] or "",
-                    row["website_domain"] or "",
+                    row["website_url"] or "",
                     row["website_title"] or "",
                     category,
                     group,

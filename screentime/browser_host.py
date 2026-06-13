@@ -64,11 +64,11 @@ def send_message(message: dict):
     sys.stdout.buffer.flush()
 
 
-def write_url_state(source: str, domain: str | None, title: str | None):
+def write_url_state(source: str, url: str | None, title: str | None):
     """Write the current browser URL state to the shared file."""
     url_file = BROWSER_URL_FILES.get(source, BROWSER_URL_FILES["chrome"])
     state = {
-        "domain": domain,
+        "url": url,
         "title": title,
         "pid": os.getpid(),
     }
@@ -109,9 +109,9 @@ def main():
 
             if msg_type == "url_update":
                 source = message.get("source", "chrome")
-                domain = message.get("domain")
+                url = message.get("url")
                 title = message.get("title")
-                write_url_state(source, domain, title)
+                write_url_state(source, url, title)
                 send_message({"status": "ok"})
 
             elif msg_type == "ping":

@@ -69,7 +69,7 @@ def _browser_url_file(window_class: str) -> Path:
 def read_browser_url(window_class: str) -> tuple[Optional[str], Optional[str]]:
     """Read the current browser tab URL from the state file.
 
-    Returns (domain, title) or (None, None) if unavailable.
+    Returns (url, title) or (None, None) if unavailable.
     """
     try:
         url_file = _browser_url_file(window_class)
@@ -79,7 +79,7 @@ def read_browser_url(window_class: str) -> tuple[Optional[str], Optional[str]]:
         with open(url_file) as f:
             data = json.load(f)
 
-        return data.get("domain"), data.get("title")
+        return data.get("url"), data.get("title")
     except (json.JSONDecodeError, IOError, KeyError):
         return None, None
 
@@ -96,12 +96,24 @@ class SessionManager:
     def __init__(self, db: Database):
         self.db = db
         self._current_session_id: Optional[int] = None
+        self._current_session_app_class: Optional[str] = None
         self._current_window: Optional[WindowInfo] = None
-        self._current_domain: Optional[str] = None
-        self._current_domain_title: Optional[str] = None
+        self._current_url: Optional[str] = None
+        self._current_url_title: Optional[str] = None
         self._is_idle = False
         self._is_lid_closed = False
         self._lock = asyncio.Lock()
+
+    def _resolve_app_class(self, window: WindowInfo) -> str:
+        """Resolve the effective app class using user-defined title rules."""
+        raw_class = window.app_class
+        rules = self.db.get_title_rules().get(raw_class)
+        if rules and window.title:
+            title_lower = window.title.lower()
+            for target in rules:
+                if title_lower.startswith(target.lower()):
+                    return target
+        return raw_class
 
     async def on_window_change(self, window: Optional[WindowInfo]):
         """Handle active window change from Hyprland IPC."""
@@ -111,12 +123,20 @@ class SessionManager:
                 self._current_window = window
                 return
 
-            # Deduplicate: Hyprland often sends multiple activewindow events
-            # for the same window. Skip if app_class hasn't changed.
+            if window is None:
+                now = time.time()
+                self._close_current_session(now)
+                self._current_window = None
+                self._current_session_app_class = None
+                return
+
+            effective_class = self._resolve_app_class(window)
+
+            # Deduplicate: Skip if both the raw window and the resolved class haven't changed.
             if (
-                window is not None
-                and self._current_window is not None
+                self._current_window is not None
                 and window.app_class == self._current_window.app_class
+                and effective_class == self._current_session_app_class
             ):
                 return
 
@@ -126,18 +146,16 @@ class SessionManager:
             self._close_current_session(now)
 
             self._current_window = window
-
-            if window is None:
-                return
+            self._current_session_app_class = effective_class
 
             # For browser windows, don't read URL immediately — the extension
             # hasn't had time to send the updated URL yet, so the state file
-            # is stale. Start with domain=None and schedule a delayed read.
-            self._current_domain = None
-            self._current_domain_title = None
+            # is stale. Start with url=None and schedule a delayed read.
+            self._current_url = None
+            self._current_url_title = None
 
             # Start new session
-            self._start_session(now, window, None, None)
+            self._start_session(now, window, effective_class, None, None)
 
         # Schedule a delayed URL check for browser windows (outside the lock)
         if window and self._is_browser(window):
@@ -167,10 +185,12 @@ class SessionManager:
             if window is None:
                 return
 
-            self._current_domain = None
-            self._current_domain_title = None
-            self._start_session(now, window, None, None)
-            log.info("Active: started new session for %s", window.app_class)
+            effective_class = self._resolve_app_class(window)
+            self._current_session_app_class = effective_class
+            self._current_url = None
+            self._current_url_title = None
+            self._start_session(now, window, effective_class, None, None)
+            log.info("Active: started new session for %s (effective: %s)", window.app_class, effective_class)
 
         # Schedule delayed URL check for browser windows
         if window and self._is_browser(window):
@@ -197,10 +217,12 @@ class SessionManager:
             if window is None:
                 return
 
-            self._current_domain = None
-            self._current_domain_title = None
-            self._start_session(now, window, None, None)
-            log.info("Lid opened: resumed tracking for %s", window.app_class)
+            effective_class = self._resolve_app_class(window)
+            self._current_session_app_class = effective_class
+            self._current_url = None
+            self._current_url_title = None
+            self._start_session(now, window, effective_class, None, None)
+            log.info("Lid opened: resumed tracking for %s (effective: %s)", window.app_class, effective_class)
 
         # Schedule delayed URL check for browser windows
         if window and self._is_browser(window):
@@ -216,16 +238,16 @@ class SessionManager:
             if self._is_idle or self._is_lid_closed:
                 return
 
-            domain, title = read_browser_url(window.app_class)
-            if domain != self._current_domain:
+            url, title = read_browser_url(window.app_class)
+            if url != self._current_url:
                 # Update the existing session in-place (no close+reopen)
-                self._current_domain = domain
-                self._current_domain_title = title
+                self._current_url = url
+                self._current_url_title = title
                 if self._current_session_id is not None:
                     self.db.update_session_website(
-                        self._current_session_id, domain, title
+                        self._current_session_id, url, title
                     )
-                log.info("Browser URL resolved to: %s", domain)
+                log.info("Browser URL resolved to: %s", url)
 
     async def heartbeat(self):
         """Update the current session's end_time (crash resilience)."""
@@ -243,7 +265,7 @@ class SessionManager:
                     # Start a fresh session for the wake-up time if not idle
                     if self._current_window and not self._is_idle:
                         self._start_session(
-                            now, self._current_window, self._current_domain, self._current_domain_title
+                            now, self._current_window, self._current_session_app_class, self._current_url, self._current_url_title
                         )
 
             self._last_time = now
@@ -253,16 +275,16 @@ class SessionManager:
 
                 # Also check if browser URL has changed
                 if self._current_window and self._is_browser(self._current_window):
-                    new_domain, new_title = read_browser_url(self._current_window.app_class)
-                    if new_domain != self._current_domain:
+                    new_url, new_title = read_browser_url(self._current_window.app_class)
+                    if new_url != self._current_url:
                         # Website changed within browser — close old session, start new
                         self._close_current_session(now)
-                        self._current_domain = new_domain
-                        self._current_domain_title = new_title
+                        self._current_url = new_url
+                        self._current_url_title = new_title
                         self._start_session(
-                            now, self._current_window, new_domain, new_title
+                            now, self._current_window, self._current_session_app_class, new_url, new_title
                         )
-                        log.info("Chrome URL changed to: %s", new_domain)
+                        log.info("Browser URL changed to: %s", new_url)
 
     async def shutdown(self):
         """Close the current session on daemon shutdown."""
@@ -276,23 +298,24 @@ class SessionManager:
         self,
         now: float,
         window: WindowInfo,
-        domain: Optional[str],
-        domain_title: Optional[str],
+        effective_class: str,
+        url: Optional[str],
+        url_title: Optional[str],
     ):
         """Start a new session in the database."""
         self._current_session_id = self.db.insert_session(
             start_time=now,
             end_time=now,
-            app_class=window.app_class,
+            app_class=effective_class,
             app_title=window.title,
-            website_domain=domain,
-            website_title=domain_title,
+            website_url=url,
+            website_title=url_title,
         )
         log.debug(
-            "Session started: id=%d app=%s domain=%s",
+            "Session started: id=%d app=%s url=%s",
             self._current_session_id,
-            window.app_class,
-            domain,
+            effective_class,
+            url,
         )
 
     def _close_current_session(self, now: float):
@@ -301,8 +324,8 @@ class SessionManager:
             self.db.close_session(self._current_session_id, now)
             log.debug("Session closed: id=%d", self._current_session_id)
             self._current_session_id = None
-            self._current_domain = None
-            self._current_domain_title = None
+            self._current_url = None
+            self._current_url_title = None
 
     @staticmethod
     def _is_browser(window: WindowInfo) -> bool:

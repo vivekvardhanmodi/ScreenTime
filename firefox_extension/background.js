@@ -14,7 +14,7 @@ const ALARM_NAME = "screentime-keepalive";
 const ALARM_INTERVAL_MINUTES = 0.4; // ~25 seconds
 
 let port = null;
-let currentDomain = null;
+let currentUrl = null;
 let currentTitle = null;
 
 // ── Native Messaging Connection ──────────────────────────────────────
@@ -46,7 +46,7 @@ function connectNativeHost() {
   }
 }
 
-function sendUrlUpdate(domain, title) {
+function sendUrlUpdate(url, title) {
   if (!port) {
     connectNativeHost();
   }
@@ -56,7 +56,7 @@ function sendUrlUpdate(domain, title) {
       port.postMessage({
         type: "url_update",
         source: "firefox",
-        domain: domain,
+        url: domain,
         title: title,
       });
     } catch (e) {
@@ -68,7 +68,7 @@ function sendUrlUpdate(domain, title) {
 
 // ── URL Extraction ───────────────────────────────────────────────────
 
-function extractDomain(url) {
+function extractUrl(url) {
   if (!url) return null;
 
   try {
@@ -83,21 +83,20 @@ function extractDomain(url) {
     }
 
     const parsed = new URL(url);
-    let hostname = parsed.hostname;
-
+    
     // Remove 'www.' prefix for cleaner tracking
-    if (hostname.startsWith("www.")) {
-      hostname = hostname.substring(4);
+    if (parsed.hostname.startsWith("www.")) {
+      parsed.hostname = parsed.hostname.substring(4);
     }
 
-    return hostname || null;
+    return parsed.href || null;
   } catch {
     return null;
   }
 }
 
-function extractTitle(tabTitle, domain) {
-  if (!tabTitle) return domain;
+function extractTitle(tabTitle, url) {
+  if (!tabTitle) return url;
   // Remove common suffixes like " — Mozilla Firefox"
   return tabTitle
     .replace(/\s*[-–—]\s*Mozilla Firefox\s*$/i, "")
@@ -119,14 +118,14 @@ async function updateCurrentTab() {
       return;
     }
 
-    const domain = extractDomain(tab.url);
-    const title = extractTitle(tab.title, domain);
+    const url = extractUrl(tab.url);
+    const title = extractTitle(tab.title, url);
 
     // Only send update if domain changed
-    if (domain !== currentDomain || title !== currentTitle) {
-      currentDomain = domain;
+    if (url !== currentUrl || title !== currentTitle) {
+      currentUrl = domain;
       currentTitle = title;
-      sendUrlUpdate(domain, title);
+      sendUrlUpdate(url, title);
     }
   } catch (e) {
     console.error("Failed to query active tab:", e);
@@ -143,13 +142,13 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.url || changeInfo.title) {
     // Only process if this is the active tab
     if (tab.active) {
-      const domain = extractDomain(tab.url);
-      const title = extractTitle(tab.title, domain);
+      const url = extractUrl(tab.url);
+      const title = extractTitle(tab.title, url);
 
-      if (domain !== currentDomain || title !== currentTitle) {
-        currentDomain = domain;
+      if (url !== currentUrl || title !== currentTitle) {
+        currentUrl = domain;
         currentTitle = title;
-        sendUrlUpdate(domain, title);
+        sendUrlUpdate(url, title);
       }
     }
   }
