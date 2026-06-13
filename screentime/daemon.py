@@ -103,6 +103,7 @@ class SessionManager:
         self._is_idle = False
         self._is_lid_closed = False
         self._lock = asyncio.Lock()
+        self._browser_watcher_task: Optional[asyncio.Task] = None
 
     def _resolve_app_class(self, window: WindowInfo) -> str:
         """Resolve the effective app class using user-defined title rules."""
@@ -157,9 +158,14 @@ class SessionManager:
             # Start new session
             self._start_session(now, window, effective_class, None, None)
 
-        # Schedule a delayed URL check for browser windows (outside the lock)
+        # Manage the browser URL watcher (outside the lock)
         if window and self._is_browser(window):
+            # Browser is active — start fast URL polling and schedule initial check
+            self._start_browser_watcher()
             asyncio.create_task(self._delayed_url_check(window))
+        else:
+            # Non-browser or no window — stop the watcher
+            self._stop_browser_watcher()
 
     async def on_idle(self):
         """Handle user going idle."""
@@ -249,6 +255,61 @@ class SessionManager:
                     )
                 log.info("Browser URL resolved to: %s", url)
 
+    def _check_browser_url(self):
+        """Check if the browser URL has changed and start a new session if so.
+
+        Must be called while holding self._lock.
+        """
+        if (
+            self._current_session_id is None
+            or self._is_idle
+            or self._is_lid_closed
+            or not self._current_window
+            or not self._is_browser(self._current_window)
+        ):
+            return
+
+        now = time.time()
+        new_url, new_title = read_browser_url(self._current_window.app_class)
+        if new_url != self._current_url:
+            # Website changed within browser — close old session, start new
+            self._close_current_session(now)
+            self._current_url = new_url
+            self._current_url_title = new_title
+            # Re-query Hyprland for the fresh window title
+            fresh_window = get_active_window()
+            if fresh_window:
+                self._current_window = fresh_window
+            self._start_session(
+                now, self._current_window, self._current_session_app_class, new_url, new_title
+            )
+            log.info("Browser URL changed to: %s", new_url)
+
+    async def _browser_url_watcher(self):
+        """Fast poll loop that only runs while a browser window is focused.
+
+        Polls the state file every 2 seconds to detect tab switches.
+        Started when a browser gets focus, cancelled when focus leaves.
+        """
+        try:
+            while True:
+                await asyncio.sleep(2)
+                async with self._lock:
+                    self._check_browser_url()
+        except asyncio.CancelledError:
+            pass
+
+    def _start_browser_watcher(self):
+        """Start the browser URL watcher if not already running."""
+        if self._browser_watcher_task is None or self._browser_watcher_task.done():
+            self._browser_watcher_task = asyncio.create_task(self._browser_url_watcher())
+
+    def _stop_browser_watcher(self):
+        """Stop the browser URL watcher."""
+        if self._browser_watcher_task is not None and not self._browser_watcher_task.done():
+            self._browser_watcher_task.cancel()
+            self._browser_watcher_task = None
+
     async def heartbeat(self):
         """Update the current session's end_time (crash resilience)."""
         async with self._lock:
@@ -273,25 +334,9 @@ class SessionManager:
             if self._current_session_id is not None and not self._is_idle:
                 self.db.update_session_end(self._current_session_id, now)
 
-                # Also check if browser URL has changed
-                if self._current_window and self._is_browser(self._current_window):
-                    new_url, new_title = read_browser_url(self._current_window.app_class)
-                    if new_url != self._current_url:
-                        # Website changed within browser — close old session, start new
-                        self._close_current_session(now)
-                        self._current_url = new_url
-                        self._current_url_title = new_title
-                        # Re-query Hyprland for the fresh window title
-                        fresh_window = get_active_window()
-                        if fresh_window:
-                            self._current_window = fresh_window
-                        self._start_session(
-                            now, self._current_window, self._current_session_app_class, new_url, new_title
-                        )
-                        log.info("Browser URL changed to: %s", new_url)
-
     async def shutdown(self):
         """Close the current session on daemon shutdown."""
+        self._stop_browser_watcher()
         async with self._lock:
             if self._current_session_id is not None:
                 now = time.time()
