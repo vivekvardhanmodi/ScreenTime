@@ -121,6 +121,15 @@ EOF
 
 ok "Firefox native messaging host installed"
 
+# ── Create symlinks in ~/.local/bin ──────────────────────────────────
+
+info "Creating symlinks in ~/.local/bin..."
+mkdir -p "$HOME/.local/bin"
+ln -sf "$VENV_DIR/bin/screentime" "$HOME/.local/bin/screentime"
+ln -sf "$VENV_DIR/bin/screentimed" "$HOME/.local/bin/screentimed"
+ln -sf "$VENV_DIR/bin/screentime-web" "$HOME/.local/bin/screentime-web"
+ok "Symlinks created in ~/.local/bin"
+
 # ── Print next steps ──────────────────────────────────────────────────
 
 echo ""
@@ -144,14 +153,17 @@ echo -e "     ${GREEN}sed -i 's/EXTENSION_ID_PLACEHOLDER/YOUR_EXTENSION_ID/' \\"
 echo -e "       $CHROME_NMH_DIR/$NATIVE_HOST_NAME.json${NC}"
 echo ""
 echo -e "  ${YELLOW}3. Start the daemon:${NC}"
-echo -e "     ${GREEN}$VENV_DIR/bin/screentimed &${NC}"
+echo -e "     ${GREEN}screentimed &${NC} (or $VENV_DIR/bin/screentimed &)"
 echo ""
 echo -e "  ${YELLOW}4. Launch the TUI:${NC}"
-echo -e "     ${GREEN}$VENV_DIR/bin/screentime${NC}"
+echo -e "     ${GREEN}screentime${NC} (or $VENV_DIR/bin/screentime)"
 echo ""
-echo -e "  ${YELLOW}5. Auto-start on login:${NC}"
+echo -e "  ${YELLOW}5. Launch the Web App:${NC}"
+echo -e "     ${GREEN}screentime-web${NC} (or $VENV_DIR/bin/screentime-web)"
+echo ""
+echo -e "  ${YELLOW}6. Auto-start on login:${NC}"
 echo "     Add this to your hyprland.conf:"
-echo -e "     ${GREEN}exec-once = $VENV_DIR/bin/screentimed${NC}"
+echo -e "     ${GREEN}exec-once = screentimed${NC} (or exec-once = $VENV_DIR/bin/screentimed)"
 echo ""
 echo -e "${BLUE}Useful commands:${NC}"
 echo "  Logs:  tail -f $DATA_DIR/daemon.log"

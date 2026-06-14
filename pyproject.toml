@@ -9,11 +9,14 @@ description = "Screen time tracker for Arch Linux + Hyprland"
 requires-python = ">=3.11"
 dependencies = [
     "textual>=0.40.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
 ]
 
 [project.scripts]
 screentime = "screentime.tui.app:main"
 screentimed = "screentime.daemon:main"
+screentime-web = "screentime.api:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
