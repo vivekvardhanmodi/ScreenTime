@@ -69,28 +69,42 @@ No extra ID step needed — Firefox uses a fixed extension ID.
 
 ```bash
 # Start the daemon in the background
-~/screentime/venv/bin/screentimed &
+screentimed &
 
-# View your stats
-~/screentime/venv/bin/screentime
+# Open the Web App
+screentime-web
+# (Navigate to http://localhost:8000 in your browser)
+
+# Or, use the TUI (Terminal Interface)
+screentime
 ```
 
 **Auto-start on login:** Add this to your `~/.config/hypr/hyprland.conf`:
 ```conf
-exec-once = ~/screentime/venv/bin/screentimed
+exec-once = screentimed
 ```
 
 ---
 
-## TUI Usage
+## Web App & TUI Usage
 
-Launch the terminal interface:
+ScreenTime provides a beautiful, modern **Web Application** and a lightweight **Terminal UI**.
+
+### Launch the Web App
 
 ```bash
-~/screentime/venv/bin/screentime
+screentime-web
+```
+Then navigate to `http://localhost:8000` in your browser.
+
+### Launch the TUI
+
+```bash
+screentime
 ```
 
-### Tabs
+### Views & Features
+
 
 | Tab | What it shows |
 |-----|--------------|
@@ -137,7 +151,7 @@ The daemon (`screentimed`) prevents multiple instances automatically.
 
 ```bash
 # Start
-~/screentime/venv/bin/screentimed &
+screentimed &
 
 # Stop
 pkill -f screentimed
@@ -198,18 +212,15 @@ screentime/
 ├── screentime/
 │   ├── __init__.py           # Constants and paths
 │   ├── daemon.py             # Background daemon (asyncio orchestrator)
+│   ├── api.py                # FastAPI web server and static file hosting
 │   ├── tracker.py            # Hyprland IPC window tracking
 │   ├── idle.py               # swayidle idle detection (90s timeout)
 │   ├── database.py           # SQLite operations
 │   ├── browser_host.py       # Browser native messaging host
-│   └── tui/
-│       ├── app.py            # Main TUI application
-│       ├── utils.py          # Formatting utilities
-│       ├── dashboard.py      # Today view
-│       ├── history.py        # Daily/Weekly/Monthly views
-│       ├── categories.py     # Category management
-│       ├── groups.py         # Group management
-│       └── export.py         # CSV export
+│   └── tui/                  # Main TUI application and views
+├── web/                      # React Frontend (Web App)
+│   ├── src/                  # React components, pages, CSS
+│   └── public/               # Static assets
 ├── chrome_extension/
 │   ├── manifest.json         # Manifest V3
 │   ├── background.js         # Service worker (tab tracking)
