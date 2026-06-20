@@ -165,13 +165,13 @@ def get_categories():
 
 @app.post("/api/categories")
 def set_category(req: CategoryMapRequest):
-    db.set_category(req.name, req.category)
+    db.assign_app_to_category(req.name, req.category)
     return {"status": "success"}
 
 
 @app.delete("/api/categories")
 def delete_category(req: CategoryDeleteRequest):
-    db.remove_category(req.name)
+    db.unassign_app_from_category(req.name)
     return {"status": "success"}
 
 
@@ -182,13 +182,13 @@ def get_groups():
 
 @app.post("/api/groups")
 def set_group(req: GroupMapRequest):
-    db.set_group(req.name, req.group)
+    db.add_to_group(req.name, req.group)
     return {"status": "success"}
 
 
 @app.delete("/api/groups")
 def delete_group(req: GroupDeleteRequest):
-    db.remove_group(req.name)
+    db.remove_from_group(req.name)
     return {"status": "success"}
 
 
