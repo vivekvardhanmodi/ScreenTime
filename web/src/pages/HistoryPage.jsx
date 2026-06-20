@@ -27,9 +27,23 @@ export default function HistoryPage() {
     return new Date().toISOString().split('T')[0];
   });
 
+  const [device, setDevice] = useState(''); // '' means all devices
+  const [availableDevices, setAvailableDevices] = useState([]);
+
+  useEffect(() => {
+    // Fetch available devices
+    axios.get('/api/devices')
+      .then(res => {
+        setAvailableDevices(res.data.devices || []);
+      })
+      .catch(err => console.error("Error fetching devices:", err));
+  }, []);
+
   const fetchData = () => {
     setLoading(true);
-    axios.get(`/api/summary?start_date=${startDate}&end_date=${endDate}`)
+    let url = `/api/summary?start_date=${startDate}&end_date=${endDate}`;
+    if (device) url += `&device_id=${device}`;
+    axios.get(url)
       .then(res => {
         setData(res.data);
         setLoading(false);
@@ -39,7 +53,7 @@ export default function HistoryPage() {
 
   useEffect(() => {
     fetchData();
-  }, [startDate, endDate]);
+  }, [startDate, endDate, device]);
 
   if (loading && !data) return <div className="page-header"><h1 className="page-title">Loading...</h1></div>;
 
@@ -88,6 +102,23 @@ export default function HistoryPage() {
           <p className="page-subtitle">Analyze your past activity</p>
         </div>
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="form-label">Device</label>
+            <select 
+              className="input" 
+              value={device} 
+              onChange={e => setDevice(e.target.value)}
+              style={{ cursor: 'pointer' }}
+            >
+              <option value="">All Devices</option>
+              {availableDevices.map(d => (
+                <option key={d} value={d}>
+                  {d === 'hyprland-pc' ? 'PC (Hyprland)' : 
+                   d === 'android-phone' ? 'Mobile (Android)' : d}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label className="form-label">Start Date</label>
             <input type="date" className="input" value={startDate} onChange={e => setStartDate(e.target.value)} />

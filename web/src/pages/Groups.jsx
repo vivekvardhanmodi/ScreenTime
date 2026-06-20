@@ -7,6 +7,7 @@ export default function Groups() {
   const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState('');
   const [newGroup, setNewGroup] = useState('');
+  const [identifiers, setIdentifiers] = useState([]);
 
   const fetchGroups = () => {
     axios.get('/api/groups')
@@ -17,8 +18,17 @@ export default function Groups() {
       .catch(console.error);
   };
 
+  const fetchIdentifiers = () => {
+    axios.get('/api/identifiers')
+      .then(res => {
+        setIdentifiers(res.data.identifiers || []);
+      })
+      .catch(console.error);
+  };
+
   useEffect(() => {
     fetchGroups();
+    fetchIdentifiers();
   }, []);
 
   const handleAdd = (e) => {
@@ -41,6 +51,9 @@ export default function Groups() {
 
   if (loading) return <div className="page-header"><h1 className="page-title">Loading...</h1></div>;
 
+  // Get unique existing groups for autocomplete
+  const existingGroups = Array.from(new Set(Object.values(groups)));
+
   return (
     <div>
       <div className="page-header">
@@ -57,20 +70,32 @@ export default function Groups() {
               <input 
                 type="text" 
                 className="input" 
+                list="identifier-list"
                 placeholder="e.g. google.com" 
                 value={newName}
                 onChange={e => setNewName(e.target.value)}
               />
+              <datalist id="identifier-list">
+                {identifiers.map(id => (
+                  <option key={id.name} value={id.name}>{id.type}</option>
+                ))}
+              </datalist>
             </div>
             <div className="form-group">
               <label className="form-label">Group Name</label>
               <input 
                 type="text" 
                 className="input" 
+                list="group-list"
                 placeholder="e.g. Google Services" 
                 value={newGroup}
                 onChange={e => setNewGroup(e.target.value)}
               />
+              <datalist id="group-list">
+                {existingGroups.map(grp => (
+                  <option key={grp} value={grp} />
+                ))}
+              </datalist>
             </div>
             <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Add to Group</button>
           </form>

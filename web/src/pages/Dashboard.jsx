@@ -16,19 +16,33 @@ function formatTime(seconds) {
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [device, setDevice] = useState(''); // '' means all devices
+  const [availableDevices, setAvailableDevices] = useState([]);
 
   useEffect(() => {
-    axios.get('/api/summary')
+    // Fetch available devices
+    axios.get('/api/devices')
+      .then(res => {
+        setAvailableDevices(res.data.devices || []);
+      })
+      .catch(err => console.error("Error fetching devices:", err));
+  }, []);
+
+  useEffect(() => {
+    let url = '/api/summary';
+    if (device) url += `?device_id=${device}`;
+    setLoading(true);
+    axios.get(url)
       .then(res => {
         setData(res.data);
         setLoading(false);
       })
       .catch(err => console.error(err));
-  }, []);
+  }, [device]);
 
-  if (loading) return <div className="page-header"><h1 className="page-title">Loading...</h1></div>;
+  if (loading && !data) return <div className="page-header"><h1 className="page-title">Loading...</h1></div>;
 
-  const stats = data.stats || [];
+  const stats = data ? (data.stats || []) : [];
   
   // Aggregate by category for chart
   const categoryTotals = {};
@@ -65,9 +79,34 @@ export default function Dashboard() {
 
   return (
     <div>
-      <div className="page-header">
-        <h1 className="page-title">Today's Overview</h1>
-        <p className="page-subtitle">Your screen time for {new Date(data.start_ts * 1000).toLocaleDateString()}</p>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <h1 className="page-title">Today's Overview</h1>
+          <p className="page-subtitle">Your screen time for {data ? new Date(data.start_ts * 1000).toLocaleDateString() : ''}</p>
+        </div>
+        <div>
+          <select 
+            value={device} 
+            onChange={(e) => setDevice(e.target.value)}
+            style={{ 
+              padding: '0.5rem 1rem', 
+              borderRadius: '8px', 
+              background: '#1e293b', 
+              color: 'white',
+              border: '1px solid #334155',
+              fontFamily: 'Inter',
+              cursor: 'pointer'
+            }}
+          >
+            <option value="">All Devices</option>
+            {availableDevices.map(d => (
+              <option key={d} value={d}>
+                {d === 'hyprland-pc' ? 'PC (Hyprland)' : 
+                 d === 'android-phone' ? 'Mobile (Android)' : d}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="grid-cards">

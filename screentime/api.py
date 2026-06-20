@@ -52,10 +52,21 @@ class RuleRequest(BaseModel):
     app_class: str
     target_title: str
 
+class SyncSession(BaseModel):
+    start_time: float
+    end_time: float
+    app_class: str
+    app_title: Optional[str] = None
+    website_url: Optional[str] = None
+
+class SyncRequest(BaseModel):
+    device_id: str
+    sessions: List[SyncSession]
+
 # --- Endpoints ---
 
 @app.get("/api/summary")
-def get_summary(start_date: str = None, end_date: str = None):
+def get_summary(start_date: str = None, end_date: str = None, device_id: str = None):
     """Get aggregated summary. If no dates provided, defaults to today."""
     if start_date and end_date:
         start_ts = datetime.fromisoformat(start_date).timestamp()
@@ -67,10 +78,10 @@ def get_summary(start_date: str = None, end_date: str = None):
         end_ts = time.time()
 
     # Get the data from the DB
-    stats = db._get_stats_in_range(start_ts, end_ts)
+    stats = db._get_stats_in_range(start_ts, end_ts, device_id)
 
-    # Calculate total active time
-    total_seconds = sum(item.total_seconds for item in stats)
+    # Calculate total active time merging overlaps
+    total_seconds = db.get_total_active_time(start_ts, end_ts, device_id)
 
     # Format for JSON
     def serialize_usage(u: AppUsage) -> dict:
@@ -92,6 +103,59 @@ def get_summary(start_date: str = None, end_date: str = None):
         "total_seconds": total_seconds,
         "stats": serialized_stats
     }
+
+
+@app.get("/api/devices")
+def get_devices():
+    """Get all unique devices that have reported data."""
+    return {"devices": db.get_all_devices()}
+
+
+@app.get("/api/identifiers")
+def get_identifiers():
+    """Get all known app and website identifiers for autocomplete."""
+    identifiers = db.get_all_app_identifiers()
+    return {"identifiers": [{"name": name, "type": type} for name, type in identifiers]}
+
+
+@app.get("/api/sync/pull")
+def pull_sessions(since: float = 0.0):
+    """Pull all sessions modified/created after a timestamp."""
+    with db._connect() as conn:
+        # Note: SQLite doesn't natively track creation time unless we add a column.
+        # But we can approximate by pulling sessions where end_time > since.
+        # This will fetch all sessions that were active after the last sync.
+        rows = conn.execute(
+            "SELECT start_time, end_time, app_class, app_title, website_url, device_id FROM sessions WHERE end_time > ? ORDER BY start_time",
+            (since,)
+        ).fetchall()
+        
+    sessions = []
+    for row in rows:
+        sessions.append({
+            "start_time": row["start_time"],
+            "end_time": row["end_time"],
+            "app_class": row["app_class"],
+            "app_title": row["app_title"],
+            "website_url": row["website_url"],
+            "device_id": row["device_id"]
+        })
+    return {"sessions": sessions}
+
+
+@app.post("/api/sync/sessions")
+def sync_sessions(req: SyncRequest):
+    """Sync multiple sessions from a remote device."""
+    for session in req.sessions:
+        db.insert_session_if_not_exists(
+            start_time=session.start_time,
+            end_time=session.end_time,
+            app_class=session.app_class,
+            app_title=session.app_title,
+            website_url=session.website_url,
+            device_id=req.device_id
+        )
+    return {"status": "success", "synced": len(req.sessions)}
 
 
 @app.get("/api/categories")
@@ -165,8 +229,8 @@ def catch_all(full_path: str):
 
 def main():
     """Entry point for the web server."""
-    print("Starting ScreenTime API Server on http://127.0.0.1:8000")
-    uvicorn.run("screentime.api:app", host="127.0.0.1", port=8000, reload=True)
+    print("Starting ScreenTime API Server on http://0.0.0.0:8000")
+    uvicorn.run("screentime.api:app", host="0.0.0.0", port=8000, reload=True)
 
 if __name__ == "__main__":
     main()

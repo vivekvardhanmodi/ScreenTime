@@ -97,12 +97,27 @@ class Database:
     def _init_db(self):
         """Initialize database schema."""
         with self._connect() as conn:
-            # Safely rename website_domain to website_url if it exists
             cursor = conn.execute("PRAGMA table_info(sessions)")
             columns = [row["name"] for row in cursor.fetchall()]
+            
+            # Safely rename website_domain to website_url if it exists
             if "website_domain" in columns:
                 try:
                     conn.execute("ALTER TABLE sessions RENAME COLUMN website_domain TO website_url")
+                except sqlite3.OperationalError:
+                    pass
+            
+            # Safely drop website_title if it exists
+            if "website_title" in columns:
+                try:
+                    conn.execute("ALTER TABLE sessions DROP COLUMN website_title")
+                except sqlite3.OperationalError:
+                    pass
+                    
+            # Safely add device_id if it doesn't exist
+            if "device_id" not in columns and len(columns) > 0:
+                try:
+                    conn.execute("ALTER TABLE sessions ADD COLUMN device_id TEXT DEFAULT 'hyprland-pc'")
                 except sqlite3.OperationalError:
                     pass
 
@@ -114,7 +129,7 @@ class Database:
                     app_class TEXT NOT NULL,
                     app_title TEXT,
                     website_url TEXT,
-                    website_title TEXT
+                    device_id TEXT DEFAULT 'hyprland-pc'
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_sessions_time
@@ -123,6 +138,8 @@ class Database:
                     ON sessions(app_class);
                 CREATE INDEX IF NOT EXISTS idx_sessions_url
                     ON sessions(website_url);
+                CREATE INDEX IF NOT EXISTS idx_sessions_device
+                    ON sessions(device_id);
 
                 CREATE TABLE IF NOT EXISTS title_rules (
                     app_class TEXT NOT NULL,
@@ -196,14 +213,44 @@ class Database:
         app_class: str,
         app_title: Optional[str] = None,
         website_url: Optional[str] = None,
+        device_id: str = "hyprland-pc",
     ) -> int:
         """Insert a new session. Returns the session ID."""
         with self._connect() as conn:
             cursor = conn.execute(
                 """INSERT INTO sessions
-                   (start_time, end_time, app_class, app_title, website_url)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (start_time, end_time, app_class, app_title, website_url),
+                   (start_time, end_time, app_class, app_title, website_url, device_id)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (start_time, end_time, app_class, app_title, website_url, device_id),
+            )
+            return cursor.lastrowid
+
+    def insert_session_if_not_exists(
+        self,
+        start_time: float,
+        end_time: float,
+        app_class: str,
+        app_title: Optional[str] = None,
+        website_url: Optional[str] = None,
+        device_id: str = "hyprland-pc",
+    ) -> int:
+        """Insert a session only if an identical one doesn't exist."""
+        with self._connect() as conn:
+            # Check if it exists
+            existing = conn.execute(
+                """SELECT id FROM sessions 
+                   WHERE start_time = ? AND end_time = ? AND app_class = ? AND device_id = ?""",
+                (start_time, end_time, app_class, device_id)
+            ).fetchone()
+            
+            if existing:
+                return existing["id"]
+                
+            cursor = conn.execute(
+                """INSERT INTO sessions
+                   (start_time, end_time, app_class, app_title, website_url, device_id)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (start_time, end_time, app_class, app_title, website_url, device_id),
             )
             return cursor.lastrowid
 
@@ -245,20 +292,20 @@ class Database:
         end = datetime(d.year, d.month, d.day, 23, 59, 59, 999999).timestamp()
         return start, end
 
-    def get_daily_stats(self, d: date) -> list[AppUsage]:
+    def get_daily_stats(self, d: date, device_id: Optional[str] = None) -> list[AppUsage]:
         """Get per-app/website usage for a specific date."""
         start_ts, end_ts = self._timestamp_range_for_date(d)
-        return self._get_stats_in_range(start_ts, end_ts)
+        return self._get_stats_in_range(start_ts, end_ts, device_id)
 
-    def get_range_stats(self, start_date: date, end_date: date) -> list[AppUsage]:
+    def get_range_stats(self, start_date: date, end_date: date, device_id: Optional[str] = None) -> list[AppUsage]:
         """Get aggregated per-app/website usage for a date range (inclusive)."""
         start_ts = datetime(start_date.year, start_date.month, start_date.day).timestamp()
         end_ts = datetime(
             end_date.year, end_date.month, end_date.day, 23, 59, 59, 999999
         ).timestamp()
-        return self._get_stats_in_range(start_ts, end_ts)
+        return self._get_stats_in_range(start_ts, end_ts, device_id)
 
-    def _get_stats_in_range(self, start_ts: float, end_ts: float) -> list[AppUsage]:
+    def _get_stats_in_range(self, start_ts: float, end_ts: float, device_id: Optional[str] = None) -> list[AppUsage]:
         """Get aggregated usage stats for sessions overlapping a time range.
 
         Handles sessions that span across the range boundaries by clamping.
@@ -267,14 +314,17 @@ class Database:
         """
         with self._connect() as conn:
             # Fetch all sessions that overlap with the range
-            rows = conn.execute(
-                """SELECT app_class, website_url,
-                          start_time, end_time
-                   FROM sessions
-                   WHERE end_time > ? AND start_time < ?
-                   ORDER BY start_time""",
-                (start_ts, end_ts),
-            ).fetchall()
+            query = """SELECT app_class, website_url,
+                              start_time, end_time
+                       FROM sessions
+                       WHERE end_time > ? AND start_time < ?"""
+            params = [start_ts, end_ts]
+            if device_id:
+                query += " AND device_id = ?"
+                params.append(device_id)
+            query += " ORDER BY start_time"
+            
+            rows = conn.execute(query, tuple(params)).fetchall()
 
         # Aggregate by effective identifier (website_url or app_class)
         usage_map: dict[tuple[str, str], float] = {}  # (name, type) -> seconds
@@ -342,22 +392,62 @@ class Database:
         result.sort(key=lambda u: u.total_seconds, reverse=True)
         return result
 
-    def get_total_time_for_date(self, d: date) -> float:
+    def get_total_active_time(self, start_ts: float, end_ts: float, device_id: Optional[str] = None) -> float:
+        """Calculate total non-overlapping screen time in the given range."""
+        with self._connect() as conn:
+            query = """SELECT start_time, end_time
+                       FROM sessions
+                       WHERE end_time > ? AND start_time < ?"""
+            params = [start_ts, end_ts]
+            if device_id:
+                query += " AND device_id = ?"
+                params.append(device_id)
+            query += " ORDER BY start_time"
+            rows = conn.execute(query, tuple(params)).fetchall()
+
+        if not rows:
+            return 0.0
+
+        intervals = []
+        for row in rows:
+            effective_start = max(row["start_time"], start_ts)
+            effective_end = min(row["end_time"], end_ts)
+            if effective_end > effective_start:
+                intervals.append([effective_start, effective_end])
+
+        if not intervals:
+            return 0.0
+
+        intervals.sort(key=lambda x: x[0])
+        merged = [intervals[0]]
+        for current in intervals[1:]:
+            last = merged[-1]
+            if current[0] <= last[1]:
+                last[1] = max(last[1], current[1])
+            else:
+                merged.append(current)
+
+        return sum(m[1] - m[0] for m in merged)
+
+    def get_total_time_for_date(self, d: date, device_id: Optional[str] = None) -> float:
         """Get total screen time in seconds for a specific date."""
-        stats = self.get_daily_stats(d)
-        return sum(u.total_seconds for u in stats)
+        start_ts, end_ts = self._timestamp_range_for_date(d)
+        return self.get_total_active_time(start_ts, end_ts, device_id)
 
-    def get_total_time_in_range(self, start_date: date, end_date: date) -> float:
+    def get_total_time_in_range(self, start_date: date, end_date: date, device_id: Optional[str] = None) -> float:
         """Get total screen time in seconds for a date range."""
-        stats = self.get_range_stats(start_date, end_date)
-        return sum(u.total_seconds for u in stats)
+        start_ts = datetime(start_date.year, start_date.month, start_date.day).timestamp()
+        end_ts = datetime(
+            end_date.year, end_date.month, end_date.day, 23, 59, 59, 999999
+        ).timestamp()
+        return self.get_total_active_time(start_ts, end_ts, device_id)
 
-    def get_daily_totals_in_range(self, start_date: date, end_date: date) -> dict[date, float]:
+    def get_daily_totals_in_range(self, start_date: date, end_date: date, device_id: Optional[str] = None) -> dict[date, float]:
         """Get per-day total screen time for a date range."""
         result = {}
         current = start_date
         while current <= end_date:
-            result[current] = self.get_total_time_for_date(current)
+            result[current] = self.get_total_time_for_date(current, device_id)
             current += timedelta(days=1)
         return result
 
@@ -390,6 +480,14 @@ class Database:
         min_date = datetime.fromtimestamp(row["min_t"]).date()
         max_date = datetime.fromtimestamp(row["max_t"]).date()
         return min_date, max_date
+
+    def get_all_devices(self) -> list[str]:
+        """Get all unique device IDs that have recorded sessions."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT device_id FROM sessions WHERE device_id IS NOT NULL ORDER BY device_id"
+            ).fetchall()
+        return [r["device_id"] for r in rows]
 
     # ── Category operations ───────────────────────────────────────────
 

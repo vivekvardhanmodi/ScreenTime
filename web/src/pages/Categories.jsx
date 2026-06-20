@@ -7,6 +7,7 @@ export default function Categories() {
   const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState('');
   const [newCat, setNewCat] = useState('');
+  const [identifiers, setIdentifiers] = useState([]);
 
   const fetchCategories = () => {
     axios.get('/api/categories')
@@ -17,8 +18,17 @@ export default function Categories() {
       .catch(console.error);
   };
 
+  const fetchIdentifiers = () => {
+    axios.get('/api/identifiers')
+      .then(res => {
+        setIdentifiers(res.data.identifiers || []);
+      })
+      .catch(console.error);
+  };
+
   useEffect(() => {
     fetchCategories();
+    fetchIdentifiers();
   }, []);
 
   const handleAdd = (e) => {
@@ -41,6 +51,9 @@ export default function Categories() {
 
   if (loading) return <div className="page-header"><h1 className="page-title">Loading...</h1></div>;
 
+  // Get unique existing categories for autocomplete
+  const existingCategories = Array.from(new Set(Object.values(categories)));
+
   return (
     <div>
       <div className="page-header">
@@ -57,20 +70,32 @@ export default function Categories() {
               <input 
                 type="text" 
                 className="input" 
+                list="identifier-list"
                 placeholder="e.g. youtube.com or kitty" 
                 value={newName}
                 onChange={e => setNewName(e.target.value)}
               />
+              <datalist id="identifier-list">
+                {identifiers.map(id => (
+                  <option key={id.name} value={id.name}>{id.type}</option>
+                ))}
+              </datalist>
             </div>
             <div className="form-group">
               <label className="form-label">Category</label>
               <input 
                 type="text" 
                 className="input" 
+                list="category-list"
                 placeholder="e.g. Entertainment" 
                 value={newCat}
                 onChange={e => setNewCat(e.target.value)}
               />
+              <datalist id="category-list">
+                {existingCategories.map(cat => (
+                  <option key={cat} value={cat} />
+                ))}
+              </datalist>
             </div>
             <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Add Category</button>
           </form>
