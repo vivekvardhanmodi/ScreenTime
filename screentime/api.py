@@ -165,7 +165,11 @@ def get_categories():
 
 @app.post("/api/categories")
 def set_category(req: CategoryMapRequest):
-    db.assign_app_to_category(req.name, req.category)
+    cats = {c.name: c.id for c in db.get_categories()}
+    cat_id = cats.get(req.category)
+    if not cat_id:
+        cat_id = db.create_category(req.category)
+    db.assign_app_to_category(req.name, "app", cat_id)
     return {"status": "success"}
 
 
@@ -182,7 +186,7 @@ def get_groups():
 
 @app.post("/api/groups")
 def set_group(req: GroupMapRequest):
-    db.add_to_group(req.name, req.group)
+    db.add_to_group(group_name=req.group, app_identifier=req.name, identifier_type="app")
     return {"status": "success"}
 
 
