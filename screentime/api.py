@@ -230,7 +230,7 @@ def catch_all(full_path: str):
 def main():
     """Entry point for the web server."""
     print("Starting ScreenTime API Server on http://0.0.0.0:8000")
-    uvicorn.run("screentime.api:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("screentime.api:app", host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
     main()
