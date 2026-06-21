@@ -130,6 +130,19 @@ export default function HistoryPage() {
         </div>
       </div>
 
+      <div className="card" style={{ marginBottom: '2rem', display: 'flex', alignItems: 'center', gap: '1.5rem', background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.1) 0%, rgba(30, 41, 59, 0.5) 100%)', border: '1px solid rgba(124, 58, 237, 0.2)' }}>
+        <div style={{ flex: 1 }}>
+          <h2 style={{ fontSize: '1.1rem', color: '#94a3b8', marginBottom: '0.5rem', fontWeight: 500 }}>Total Screen Time</h2>
+          <div style={{ fontSize: '2.5rem', fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>
+            {formatTime(data?.total_seconds || 0)}
+          </div>
+          <p style={{ color: '#64748b', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+            For {device === '' ? 'All Devices' : (device === 'hyprland-pc' ? 'PC (Hyprland)' : device === 'android-phone' ? 'Mobile (Android)' : device)}
+            {' '}between {startDate} and {endDate}
+          </p>
+        </div>
+      </div>
+
       <div className="card" style={{ marginBottom: '2rem' }}>
         <h2 style={{ marginBottom: '1rem', fontSize: '1.2rem' }}>Top 10 Usage ({startDate} to {endDate})</h2>
         <div className="chart-container">
