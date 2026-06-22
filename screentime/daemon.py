@@ -364,7 +364,7 @@ class SessionManager:
         if self._current_session_id is not None:
             self.db.close_session(self._current_session_id, now)
             # Instantly clean up any short sessions so they don't clutter the DB
-            self.db.delete_short_sessions(1.0)
+            self.db.delete_specific_short_session(self._current_session_id, 1.0)
             log.debug("Session closed: id=%d", self._current_session_id)
             self._current_session_id = None
             self._current_url = None

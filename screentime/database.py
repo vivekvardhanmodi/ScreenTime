@@ -284,6 +284,14 @@ class Database:
                 (min_seconds,),
             )
 
+    def delete_specific_short_session(self, session_id: int, min_seconds: float = 1.0):
+        """Delete a specific session only if it is shorter than min_seconds."""
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM sessions WHERE id = ? AND (end_time - start_time) < ?",
+                (session_id, min_seconds),
+            )
+
     # ── Query operations ──────────────────────────────────────────────
 
     def _timestamp_range_for_date(self, d: date) -> tuple[float, float]:
