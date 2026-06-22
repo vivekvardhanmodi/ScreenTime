@@ -155,6 +155,12 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.windows.onFocusChanged.addListener((windowId) => {
   if (windowId !== chrome.windows.WINDOW_ID_NONE) {
     updateCurrentTab();
+  } else {
+    // We lost focus to an Incognito window or another app.
+    // Explicitly clear the tracked URL state.
+    currentUrl = null;
+    currentTitle = null;
+    sendUrlUpdate(null, null);
   }
 });
 
