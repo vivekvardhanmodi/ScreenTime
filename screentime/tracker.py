@@ -54,23 +54,30 @@ def _get_socket_path() -> Path:
     )
 
 
-def get_active_window() -> Optional[WindowInfo]:
+async def get_active_window() -> Optional[WindowInfo]:
     """Query the current active window via hyprctl (one-shot).
 
     Returns None if no window is focused or hyprctl fails.
     """
     try:
-        result = subprocess.run(
-            ["hyprctl", "activewindow", "-j"],
-            capture_output=True,
-            text=True,
-            timeout=5,
+        proc = await asyncio.create_subprocess_exec(
+            "hyprctl", "activewindow", "-j",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
         )
-        if result.returncode != 0:
-            log.warning("hyprctl failed: %s", result.stderr.strip())
+        try:
+            stdout_data, stderr_data = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            log.warning("hyprctl activewindow timed out")
             return None
 
-        data = json.loads(result.stdout)
+        if proc.returncode != 0:
+            log.warning("hyprctl failed: %s", stderr_data.decode().strip())
+            return None
+
+        data = json.loads(stdout_data.decode())
 
         # hyprctl returns an empty object or "class":"" when no window is focused
         app_class = data.get("class", "").strip()
@@ -80,7 +87,7 @@ def get_active_window() -> Optional[WindowInfo]:
         title = data.get("title", "").strip()
         return WindowInfo(app_class=app_class, title=title)
 
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError) as e:
+    except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
         log.warning("Failed to get active window: %s", e)
         return None
 

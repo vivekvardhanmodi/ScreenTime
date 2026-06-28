@@ -43,6 +43,7 @@ function App() {
             <Route path="/categories" element={<Categories />} />
             <Route path="/groups" element={<Groups />} />
             <Route path="/rules" element={<Rules />} />
+            <Route path="*" element={<div className="page-header"><h1 className="page-title text-red-500">404 - Page Not Found</h1></div>} />
           </Routes>
         </main>
       </div>

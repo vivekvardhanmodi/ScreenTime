@@ -10,7 +10,7 @@ import logging
 import shutil
 from typing import Callable, Awaitable, Optional
 
-from screentime import IDLE_TIMEOUT
+from screentime import get_idle_timeout
 
 log = logging.getLogger(__name__)
 
@@ -26,11 +26,11 @@ class IdleDetector:
         self,
         on_idle: Callable[[], Awaitable[None]],
         on_active: Callable[[], Awaitable[None]],
-        timeout: int = IDLE_TIMEOUT,
+        timeout: int = None,
     ):
         self._on_idle = on_idle
         self._on_active = on_active
-        self._timeout = timeout
+        self._timeout = timeout if timeout is not None else get_idle_timeout()
         self._process: Optional[asyncio.subprocess.Process] = None
         self._task: Optional[asyncio.Task] = None
         self._running = False
@@ -52,13 +52,17 @@ class IdleDetector:
     async def stop(self):
         """Stop idle detection and kill swayidle."""
         self._running = False
-        if self._process:
+        if self._process and self._process.returncode is None:
             try:
                 self._process.terminate()
                 await asyncio.wait_for(self._process.wait(), timeout=5)
-            except (ProcessLookupError, asyncio.TimeoutError):
-                if self._process:
+            except ProcessLookupError:
+                pass
+            except asyncio.TimeoutError:
+                try:
                     self._process.kill()
+                except ProcessLookupError:
+                    pass
         if self._task:
             self._task.cancel()
             try:

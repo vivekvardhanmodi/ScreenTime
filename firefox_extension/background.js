@@ -158,6 +158,10 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 browser.windows.onFocusChanged.addListener((windowId) => {
   if (windowId !== browser.windows.WINDOW_ID_NONE) {
     updateCurrentTab();
+  } else {
+    currentUrl = null;
+    currentTitle = null;
+    sendUrlUpdate(null, null);
   }
 });
 

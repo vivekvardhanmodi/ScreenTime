@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import { api } from '../api';
 import { Trash2 } from 'lucide-react';
 
 export default function Rules() {
@@ -9,9 +9,9 @@ export default function Rules() {
   const [targetTitle, setTargetTitle] = useState('');
 
   const fetchRules = () => {
-    axios.get('/api/rules')
+    api.getRules()
       .then(res => {
-        setRules(res.data);
+        setRules(res);
         setLoading(false);
       })
       .catch(console.error);
@@ -24,7 +24,7 @@ export default function Rules() {
   const handleAdd = (e) => {
     e.preventDefault();
     if (!appClass || !targetTitle) return;
-    axios.post('/api/rules', { app_class: appClass.trim(), target_title: targetTitle.trim() })
+    api.setRule(appClass.trim(), targetTitle.trim())
       .then(() => {
         setAppClass('');
         setTargetTitle('');
@@ -34,7 +34,8 @@ export default function Rules() {
   };
 
   const handleDelete = (cls, title) => {
-    axios.delete('/api/rules', { data: { app_class: cls, target_title: title } })
+    if (!window.confirm(`Are you sure you want to delete rule ${title} for ${cls}?`)) return;
+    api.deleteRule(cls, title)
       .then(fetchRules)
       .catch(console.error);
   };

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import { api } from '../api';
 import { Trash2 } from 'lucide-react';
 
 export default function Groups() {
@@ -10,18 +10,18 @@ export default function Groups() {
   const [identifiers, setIdentifiers] = useState([]);
 
   const fetchGroups = () => {
-    axios.get('/api/groups')
+    api.getGroups()
       .then(res => {
-        setGroups(res.data);
+        setGroups(res);
         setLoading(false);
       })
       .catch(console.error);
   };
 
   const fetchIdentifiers = () => {
-    axios.get('/api/identifiers')
+    api.getIdentifiers()
       .then(res => {
-        setIdentifiers(res.data.identifiers || []);
+        setIdentifiers(res.identifiers || []);
       })
       .catch(console.error);
   };
@@ -34,7 +34,11 @@ export default function Groups() {
   const handleAdd = (e) => {
     e.preventDefault();
     if (!newName || !newGroup) return;
-    axios.post('/api/groups', { name: newName.trim(), group: newGroup.trim() })
+    
+    const identifier = identifiers.find(id => id.name === newName.trim());
+    const identifierType = identifier ? identifier.type : 'app';
+    
+    api.setGroup(newName.trim(), identifierType, newGroup.trim())
       .then(() => {
         setNewName('');
         setNewGroup('');
@@ -44,7 +48,8 @@ export default function Groups() {
   };
 
   const handleDelete = (name) => {
-    axios.delete('/api/groups', { data: { name } })
+    if (!window.confirm(`Are you sure you want to remove ${name} from its group?`)) return;
+    api.deleteGroup(name)
       .then(fetchGroups)
       .catch(console.error);
   };
@@ -70,12 +75,12 @@ export default function Groups() {
               <input 
                 type="text" 
                 className="input" 
-                list="identifier-list"
+                list="group-identifier-list"
                 placeholder="e.g. google.com" 
                 value={newName}
                 onChange={e => setNewName(e.target.value)}
               />
-              <datalist id="identifier-list">
+              <datalist id="group-identifier-list">
                 {identifiers.map(id => (
                   <option key={id.name} value={id.name}>{id.type}</option>
                 ))}

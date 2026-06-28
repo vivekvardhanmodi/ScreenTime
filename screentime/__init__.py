@@ -5,28 +5,36 @@ __version__ = "0.1.0"
 import os
 from pathlib import Path
 
-# Data directory for database and state files
-DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "screentime"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+def get_data_dir() -> Path:
+    from screentime.config import get_config
+    return Path(os.path.expanduser(get_config().get('Paths', 'data_dir')))
 
-# Runtime directory for ephemeral state (chrome URL, PID file)
-RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/screentime-{os.getuid()}")) / "screentime"
-RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+def get_runtime_dir() -> Path:
+    return Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/screentime-{os.getuid()}")) / "screentime"
 
-# Database path
-DB_PATH = DATA_DIR / "screentime.db"
+def init_env():
+    """Create required directories."""
+    get_data_dir().mkdir(parents=True, exist_ok=True)
+    get_runtime_dir().mkdir(parents=True, exist_ok=True)
 
-# Chrome URL state file — written by native messaging host, read by daemon
-CHROME_URL_FILE = RUNTIME_DIR / "chrome_url"
+def get_db_path() -> Path:
+    return get_data_dir() / "screentime.db"
 
-# The Hyprland window class for Google Chrome
-CHROME_WINDOW_CLASS = "google-chrome"
+def get_chrome_url_file() -> Path:
+    return get_runtime_dir() / "chrome_url"
 
-# The Hyprland window class for Firefox
-FIREFOX_WINDOW_CLASS = "firefox"
+def get_chrome_window_class() -> str:
+    from screentime.config import get_config
+    return get_config().get('Daemon', 'chrome_window_class')
 
-# Idle timeout in seconds (matches hypridle.conf)
-IDLE_TIMEOUT = 90
+def get_firefox_window_class() -> str:
+    from screentime.config import get_config
+    return get_config().get('Daemon', 'firefox_window_class')
 
-# Heartbeat interval — how often we update the current session's end_time
-HEARTBEAT_INTERVAL = 10
+def get_idle_timeout() -> int:
+    from screentime.config import get_config
+    return int(get_config().get('Daemon', 'idle_timeout'))
+
+def get_heartbeat_interval() -> int:
+    from screentime.config import get_config
+    return int(get_config().get('Daemon', 'heartbeat_interval'))

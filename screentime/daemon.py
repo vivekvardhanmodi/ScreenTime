@@ -17,10 +17,10 @@ import time
 from typing import Optional
 
 from screentime import (
-    CHROME_WINDOW_CLASS,
-    FIREFOX_WINDOW_CLASS,
-    HEARTBEAT_INTERVAL,
-    RUNTIME_DIR,
+    get_chrome_window_class,
+    get_firefox_window_class,
+    get_heartbeat_interval,
+    get_runtime_dir,
 )
 from screentime.database import Database
 from screentime.idle import IdleDetector
@@ -30,29 +30,6 @@ from pathlib import Path
 
 # ── Logging setup ─────────────────────────────────────────────────────
 
-LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-
-
-def setup_logging():
-    """Configure logging to stderr and file."""
-    from screentime import DATA_DIR
-
-    log_file = DATA_DIR / "daemon.log"
-
-    handlers = [
-        logging.StreamHandler(sys.stderr),
-        logging.FileHandler(str(log_file)),
-    ]
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format=LOG_FORMAT,
-        datefmt=LOG_DATE_FORMAT,
-        handlers=handlers,
-    )
-
-
 log = logging.getLogger(__name__)
 
 
@@ -61,9 +38,9 @@ log = logging.getLogger(__name__)
 def _browser_url_file(window_class: str) -> Path:
     """Get the URL state file path for the given browser window class."""
     wc = window_class.lower()
-    if FIREFOX_WINDOW_CLASS in wc:
-        return RUNTIME_DIR / "firefox_url"
-    return RUNTIME_DIR / "chrome_url"
+    if get_firefox_window_class() in wc:
+        return get_runtime_dir() / "firefox_url"
+    return get_runtime_dir() / "chrome_url"
 
 
 def read_browser_url(window_class: str) -> Optional[str]:
@@ -103,11 +80,18 @@ class SessionManager:
         self._is_lid_closed = False
         self._lock = asyncio.Lock()
         self._browser_watcher_task: Optional[asyncio.Task] = None
+        self._title_rules_cache: dict[str, list[str]] = {}
+        self._last_title_rules_fetch: float = 0.0
 
     def _resolve_app_class(self, window: WindowInfo) -> str:
         """Resolve the effective app class using user-defined title rules."""
+        now = time.time()
+        if now - self._last_title_rules_fetch > 60.0:
+            self._title_rules_cache = self.db.get_title_rules()
+            self._last_title_rules_fetch = now
+
         raw_class = window.app_class
-        rules = self.db.get_title_rules().get(raw_class)
+        rules = self._title_rules_cache.get(raw_class)
         if rules and window.title:
             title_lower = window.title.lower()
             for target in rules:
@@ -183,7 +167,7 @@ class SessionManager:
             now = time.time()
 
             # Re-query the current window since it may have changed during idle
-            window = get_active_window()
+            window = await get_active_window()
             self._current_window = window
 
             if window is None:
@@ -215,7 +199,7 @@ class SessionManager:
                 return  # Still idle, wait for on_active
             
             now = time.time()
-            window = get_active_window()
+            window = await get_active_window()
             self._current_window = window
             if window is None:
                 return
@@ -250,7 +234,7 @@ class SessionManager:
                     )
                 log.info("Browser URL resolved to: %s", url)
 
-    def _check_browser_url(self):
+    async def _check_browser_url(self):
         """Check if the browser URL has changed and start a new session if so.
 
         Must be called while holding self._lock.
@@ -271,7 +255,7 @@ class SessionManager:
             self._close_current_session(now)
             self._current_url = new_url
             # Re-query Hyprland for the fresh window title
-            fresh_window = get_active_window()
+            fresh_window = await get_active_window()
             if fresh_window:
                 self._current_window = fresh_window
             self._start_session(
@@ -289,7 +273,7 @@ class SessionManager:
             while True:
                 await asyncio.sleep(2)
                 async with self._lock:
-                    self._check_browser_url()
+                    await self._check_browser_url()
         except asyncio.CancelledError:
             pass
 
@@ -312,7 +296,7 @@ class SessionManager:
             # Detect sleep/suspend (if time jumped by more than 30s between heartbeats)
             if hasattr(self, '_last_time'):
                 jump = now - self._last_time
-                if jump > 30.0:
+                if jump > 120.0:
                     log.info("System sleep detected (time jump of %.1fs)", jump)
                     # Close the session at the last known awake time
                     if self._current_session_id is not None:
@@ -374,15 +358,15 @@ class SessionManager:
         """Check if a window is a supported browser (Chrome, Chrome PWA, or Firefox)."""
         wc = window.app_class.lower()
         return (
-            CHROME_WINDOW_CLASS in wc
+            get_chrome_window_class() in wc
             or wc.startswith("chrome-")
-            or FIREFOX_WINDOW_CLASS in wc
+            or get_firefox_window_class() in wc
         )
 
 
 # ── PID file ──────────────────────────────────────────────────────────
 
-PID_FILE = RUNTIME_DIR / "daemon.pid"
+PID_FILE = get_runtime_dir() / "daemon.pid"
 
 
 def write_pid():
@@ -413,8 +397,9 @@ def is_already_running() -> bool:
 # ── Main daemon loop ──────────────────────────────────────────────────
 
 async def run_daemon():
-    """Main daemon entry point."""
-    setup_logging()
+    """Main entry point for the daemon."""
+    import screentime
+    screentime.init_env()
 
     if is_already_running():
         log.error("Another screentime-daemon is already running. Exiting.")
@@ -423,7 +408,7 @@ async def run_daemon():
     write_pid()
     log.info("ScreenTime daemon starting (PID %d)", os.getpid())
 
-    db = Database()
+    db = Database(persistent=True)
     session_mgr = SessionManager(db)
 
     # Set up components
@@ -447,7 +432,7 @@ async def run_daemon():
         await idle.start()
 
         # Set initial window state
-        initial_window = get_active_window()
+        initial_window = await get_active_window()
         if initial_window:
             await session_mgr.on_window_change(initial_window)
             log.info("Initial window: %s", initial_window.app_class)
@@ -458,7 +443,7 @@ async def run_daemon():
                 await session_mgr.heartbeat()
                 try:
                     await asyncio.wait_for(
-                        shutdown_event.wait(), timeout=HEARTBEAT_INTERVAL
+                        shutdown_event.wait(), timeout=get_heartbeat_interval()
                     )
                 except asyncio.TimeoutError:
                     pass
@@ -527,6 +512,18 @@ async def run_daemon():
 
 def main():
     """Entry point for screentime-daemon command."""
+    import argparse
+    parser = argparse.ArgumentParser(description="ScreenTime Daemon")
+    parser.add_argument("--log-console", action="store_true", help="Log to console")
+    parser.add_argument("--log-level", type=str, help="Override log level (e.g. DEBUG, INFO)")
+    args = parser.parse_args()
+    
+    from screentime.config import get_config
+    from screentime.loggers import setup_logging
+    
+    config = get_config()
+    setup_logging(config, "daemon.log", log_console=args.log_console, log_level=args.log_level)
+
     asyncio.run(run_daemon())
 
 

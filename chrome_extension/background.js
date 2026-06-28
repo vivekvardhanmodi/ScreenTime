@@ -8,7 +8,7 @@
 
 const NATIVE_HOST_NAME = "com.screentime.native";
 const ALARM_NAME = "screentime-keepalive";
-const ALARM_INTERVAL_MINUTES = 0.4; // ~25 seconds
+const ALARM_INTERVAL_MINUTES = 1.0; // ~60 seconds
 
 let port = null;
 let currentUrl = null;

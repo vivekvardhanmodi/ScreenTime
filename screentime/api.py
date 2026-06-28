@@ -11,9 +11,20 @@ from pydantic import BaseModel
 import uvicorn
 import os
 
-from screentime.database import Database, AppUsage
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="ScreenTime API")
+from screentime.database import Database
+from screentime.models import AppUsage
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global db
+    import screentime
+    screentime.init_env()
+    db = Database(persistent=False)
+    yield
+
+app = FastAPI(title="ScreenTime API", lifespan=lifespan)
 
 # Enable CORS for the React dev server
 app.add_middleware(
@@ -27,15 +38,11 @@ app.add_middleware(
 # Initialize DB connection on startup
 db: Database = None
 
-@app.on_event("startup")
-def startup_event():
-    global db
-    db = Database()
-
 # --- Models ---
 
 class CategoryMapRequest(BaseModel):
     name: str
+    identifier_type: str = "app"
     category: str
 
 class CategoryDeleteRequest(BaseModel):
@@ -43,6 +50,7 @@ class CategoryDeleteRequest(BaseModel):
 
 class GroupMapRequest(BaseModel):
     name: str
+    identifier_type: str = "app"
     group: str
 
 class GroupDeleteRequest(BaseModel):
@@ -69,13 +77,15 @@ class SyncRequest(BaseModel):
 def get_summary(start_date: str = None, end_date: str = None, device_id: str = None):
     """Get aggregated summary. If no dates provided, defaults to today."""
     if start_date and end_date:
-        start_ts = datetime.fromisoformat(start_date).timestamp()
-        end_ts = datetime.fromisoformat(end_date).timestamp() + 86400  # include the whole end day
+        start_date_obj = datetime.fromisoformat(start_date).date()
+        end_date_obj = datetime.fromisoformat(end_date).date()
+        start_ts = datetime(start_date_obj.year, start_date_obj.month, start_date_obj.day).timestamp()
+        end_ts = datetime(end_date_obj.year, end_date_obj.month, end_date_obj.day, 23, 59, 59, 999999).timestamp()
     else:
         # Default to today
         today = date.today()
         start_ts = datetime(today.year, today.month, today.day).timestamp()
-        end_ts = time.time()
+        end_ts = datetime(today.year, today.month, today.day, 23, 59, 59, 999999).timestamp()
 
     # Get the data from the DB
     stats = db._get_stats_in_range(start_ts, end_ts, device_id)
@@ -146,7 +156,13 @@ def pull_sessions(since: float = 0.0):
 @app.post("/api/sync/sessions")
 def sync_sessions(req: SyncRequest):
     """Sync multiple sessions from a remote device."""
+    now = time.time()
+    valid_sessions = 0
     for session in req.sessions:
+        if session.start_time > session.end_time:
+            continue
+        if session.end_time > now + 3600: # allow for slight time drift
+            continue
         db.insert_session_if_not_exists(
             start_time=session.start_time,
             end_time=session.end_time,
@@ -155,7 +171,8 @@ def sync_sessions(req: SyncRequest):
             website_url=session.website_url,
             device_id=req.device_id
         )
-    return {"status": "success", "synced": len(req.sessions)}
+        valid_sessions += 1
+    return {"status": "success", "synced": valid_sessions}
 
 
 @app.get("/api/categories")
@@ -169,7 +186,7 @@ def set_category(req: CategoryMapRequest):
     cat_id = cats.get(req.category)
     if not cat_id:
         cat_id = db.create_category(req.category)
-    db.assign_app_to_category(req.name, "app", cat_id)
+    db.assign_app_to_category(req.name, req.identifier_type, cat_id)
     return {"status": "success"}
 
 
@@ -186,7 +203,7 @@ def get_groups():
 
 @app.post("/api/groups")
 def set_group(req: GroupMapRequest):
-    db.add_to_group(group_name=req.group, app_identifier=req.name, identifier_type="app")
+    db.add_to_group(group_name=req.group, app_identifier=req.name, identifier_type=req.identifier_type)
     return {"status": "success"}
 
 
@@ -198,7 +215,12 @@ def delete_group(req: GroupDeleteRequest):
 
 @app.get("/api/rules")
 def get_rules():
-    return db.get_title_rules()
+    rules_dict = db.get_title_rules()
+    result = []
+    for app_class, targets in rules_dict.items():
+        for target in targets:
+            result.append({"app_class": app_class, "target_title": target})
+    return result
 
 
 @app.post("/api/rules")
@@ -226,15 +248,33 @@ def catch_all(full_path: str):
     if full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="API route not found")
         
-    file_path = os.path.join(WEB_DIR, full_path)
+    file_path = os.path.abspath(os.path.join(WEB_DIR, full_path))
+    if not file_path.startswith(os.path.abspath(WEB_DIR)):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     if os.path.isfile(file_path):
         return FileResponse(file_path)
     return FileResponse(os.path.join(WEB_DIR, "index.html"))
 
 def main():
     """Entry point for the web server."""
-    print("Starting ScreenTime API Server on http://0.0.0.0:8000")
-    uvicorn.run("screentime.api:app", host="0.0.0.0", port=8000)
+    import argparse
+    parser = argparse.ArgumentParser(description="ScreenTime Web Server")
+    parser.add_argument("--log-console", action="store_true", help="Log to console")
+    parser.add_argument("--log-level", type=str, help="Override log level (e.g. DEBUG, INFO)")
+    args = parser.parse_args()
+    
+    from screentime.config import get_config
+    from screentime.loggers import setup_uvicorn_logging
+    
+    config = get_config()
+    host = config.get('Server', 'host')
+    port = int(config.get('Server', 'port'))
+    
+    log_config = setup_uvicorn_logging(config, log_console=args.log_console, log_level=args.log_level)
+    
+    print(f"Starting ScreenTime API Server on http://{host}:{port}")
+    uvicorn.run("screentime.api:app", host=host, port=port, log_config=log_config)
 
 if __name__ == "__main__":
     main()

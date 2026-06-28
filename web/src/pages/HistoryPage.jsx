@@ -1,21 +1,16 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
 import { Bar } from 'react-chartjs-2';
+import { api } from '../api';
+import { formatTime } from '../utils';
+import DeviceSelector from '../components/DeviceSelector';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
-
-function formatTime(seconds) {
-  if (!seconds) return '0m';
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
 
 export default function HistoryPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   
   // Default to last 7 days
   const [startDate, setStartDate] = useState(() => {
@@ -31,24 +26,30 @@ export default function HistoryPage() {
   const [availableDevices, setAvailableDevices] = useState([]);
 
   useEffect(() => {
-    // Fetch available devices
-    axios.get('/api/devices')
-      .then(res => {
-        setAvailableDevices(res.data.devices || []);
-      })
+    api.getDevices()
+      .then(res => setAvailableDevices(res.devices || []))
       .catch(err => console.error("Error fetching devices:", err));
   }, []);
 
   const fetchData = () => {
+    if (startDate > endDate) {
+      setError("Start Date cannot be after End Date.");
+      setLoading(false);
+      return;
+    }
+    
     setLoading(true);
-    let url = `/api/summary?start_date=${startDate}&end_date=${endDate}`;
-    if (device) url += `&device_id=${device}`;
-    axios.get(url)
+    setError(null);
+    api.getSummary(startDate, endDate, device)
       .then(res => {
-        setData(res.data);
+        setData(res);
         setLoading(false);
       })
-      .catch(err => console.error(err));
+      .catch(err => {
+        console.error(err);
+        setError("Failed to load history data.");
+        setLoading(false);
+      });
   };
 
   useEffect(() => {
@@ -56,6 +57,7 @@ export default function HistoryPage() {
   }, [startDate, endDate, device]);
 
   if (loading && !data) return <div className="page-header"><h1 className="page-title">Loading...</h1></div>;
+  if (error) return <div className="page-header"><h1 className="page-title text-red-500">{error}</h1></div>;
 
   const stats = data?.stats || [];
   
@@ -103,21 +105,7 @@ export default function HistoryPage() {
         </div>
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
           <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">Device</label>
-            <select 
-              className="input" 
-              value={device} 
-              onChange={e => setDevice(e.target.value)}
-              style={{ cursor: 'pointer' }}
-            >
-              <option value="">All Devices</option>
-              {availableDevices.map(d => (
-                <option key={d} value={d}>
-                  {d === 'hyprland-pc' ? 'PC (Hyprland)' : 
-                   d === 'android-phone' ? 'Mobile (Android)' : d}
-                </option>
-              ))}
-            </select>
+            <DeviceSelector devices={availableDevices} selectedDevice={device} onChange={setDevice} />
           </div>
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label className="form-label">Start Date</label>

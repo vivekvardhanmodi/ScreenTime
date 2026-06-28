@@ -13,86 +13,47 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-from screentime import DB_PATH
-
-
-def extract_domain(url: str) -> Optional[str]:
-    """Extract the base domain from a URL."""
-    if not url:
-        return None
-    try:
-        parsed = urlparse(url)
-        domain = parsed.hostname or parsed.path
-        if domain and domain.startswith("www."):
-            domain = domain[4:]
-        return domain
-    except Exception:
-        return url
-
-
-@dataclass
-class Session:
-    """A single activity session."""
-    id: int
-    start_time: float
-    end_time: float
-    app_class: str
-    app_title: Optional[str]
-    website_url: Optional[str]
-
-    @property
-    def duration(self) -> float:
-        """Duration in seconds."""
-        return self.end_time - self.start_time
-
-    @property
-    def display_name(self) -> str:
-        """Human-readable name: website domain if available, else app class."""
-        if self.website_url:
-            domain = extract_domain(self.website_url)
-            return domain or self.app_class
-        return self.app_class
-
-
-@dataclass
-class AppUsage:
-    """Aggregated usage for an app or website (or a group)."""
-    name: str
-    identifier_type: str  # 'app', 'website', or 'group'
-    total_seconds: float
-    category: Optional[str] = None
-    children: Optional[list['AppUsage']] = None  # Individual items if this is a group
-
-
-@dataclass
-class Category:
-    """A user-defined category."""
-    id: int
-    name: str
+from screentime import get_db_path
+from screentime.models import extract_domain, Session, AppUsage, Category
 
 
 class Database:
     """SQLite database manager for ScreenTime."""
 
-    def __init__(self, db_path: Path = DB_PATH):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[Path] = None, persistent: bool = False):
+        self.db_path = db_path or get_db_path()
+        self._persistent = persistent
+        self._conn = None
+        if self._persistent:
+            self._conn = sqlite3.connect(str(self.db_path), timeout=10, check_same_thread=False)
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA foreign_keys=ON")
+            self._conn.row_factory = sqlite3.Row
         self._init_db()
 
     @contextmanager
     def _connect(self):
         """Context manager for database connections."""
-        conn = sqlite3.connect(str(self.db_path), timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        if self._persistent and self._conn:
+            try:
+                yield self._conn
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        else:
+            conn = sqlite3.connect(str(self.db_path), timeout=10)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.row_factory = sqlite3.Row
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
 
     def _init_db(self):
         """Initialize database schema."""
@@ -121,6 +82,19 @@ class Database:
                 except sqlite3.OperationalError:
                     pass
 
+            # Ensure there are no existing duplicates before creating the UNIQUE index
+            try:
+                conn.execute("""
+                    DELETE FROM sessions
+                    WHERE id NOT IN (
+                        SELECT MIN(id)
+                        FROM sessions
+                        GROUP BY start_time, app_class, device_id
+                    )
+                """)
+            except sqlite3.OperationalError:
+                pass
+
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -140,6 +114,8 @@ class Database:
                     ON sessions(website_url);
                 CREATE INDEX IF NOT EXISTS idx_sessions_device
                     ON sessions(device_id);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_unique
+                    ON sessions(start_time, app_class, device_id);
 
                 CREATE TABLE IF NOT EXISTS title_rules (
                     app_class TEXT NOT NULL,
@@ -234,22 +210,16 @@ class Database:
         website_url: Optional[str] = None,
         device_id: str = "hyprland-pc",
     ) -> int:
-        """Insert a session only if an identical one doesn't exist."""
+        """Insert or update a session if it exists."""
         with self._connect() as conn:
-            # Check if it exists
-            existing = conn.execute(
-                """SELECT id FROM sessions 
-                   WHERE start_time = ? AND end_time = ? AND app_class = ? AND device_id = ?""",
-                (start_time, end_time, app_class, device_id)
-            ).fetchone()
-            
-            if existing:
-                return existing["id"]
-                
             cursor = conn.execute(
                 """INSERT INTO sessions
                    (start_time, end_time, app_class, app_title, website_url, device_id)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(start_time, app_class, device_id)
+                   DO UPDATE SET end_time=excluded.end_time,
+                                 app_title=excluded.app_title,
+                                 website_url=excluded.website_url""",
                 (start_time, end_time, app_class, app_title, website_url, device_id),
             )
             return cursor.lastrowid
@@ -451,12 +421,57 @@ class Database:
         return self.get_total_active_time(start_ts, end_ts, device_id)
 
     def get_daily_totals_in_range(self, start_date: date, end_date: date, device_id: Optional[str] = None) -> dict[date, float]:
-        """Get per-day total screen time for a date range."""
+        """Get per-day total screen time for a date range in a single sweep."""
+        start_ts = datetime(start_date.year, start_date.month, start_date.day).timestamp()
+        end_ts = datetime(
+            end_date.year, end_date.month, end_date.day, 23, 59, 59, 999999
+        ).timestamp()
+
+        with self._connect() as conn:
+            query = """SELECT start_time, end_time
+                       FROM sessions
+                       WHERE end_time > ? AND start_time < ?"""
+            params = [start_ts, end_ts]
+            if device_id:
+                query += " AND device_id = ?"
+                params.append(device_id)
+            query += " ORDER BY start_time"
+            rows = conn.execute(query, tuple(params)).fetchall()
+
         result = {}
         current = start_date
         while current <= end_date:
-            result[current] = self.get_total_time_for_date(current, device_id)
+            result[current] = 0.0
             current += timedelta(days=1)
+
+        if not rows:
+            return result
+
+        for d in result.keys():
+            d_start = datetime(d.year, d.month, d.day).timestamp()
+            d_end = datetime(d.year, d.month, d.day, 23, 59, 59, 999999).timestamp()
+            
+            intervals = []
+            for row in rows:
+                effective_start = max(row["start_time"], d_start)
+                effective_end = min(row["end_time"], d_end)
+                if effective_end > effective_start:
+                    intervals.append([effective_start, effective_end])
+                    
+            if not intervals:
+                continue
+                
+            intervals.sort(key=lambda x: x[0])
+            merged = [intervals[0]]
+            for current_interval in intervals[1:]:
+                last = merged[-1]
+                if current_interval[0] <= last[1]:
+                    last[1] = max(last[1], current_interval[1])
+                else:
+                    merged.append(current_interval)
+            
+            result[d] = sum(m[1] - m[0] for m in merged)
+
         return result
 
     def get_all_app_identifiers(self) -> list[tuple[str, str]]:
@@ -468,12 +483,18 @@ class Database:
             ).fetchall()
             # Get website domains
             web_rows = conn.execute(
-                "SELECT DISTINCT website_url FROM sessions WHERE website_url IS NOT NULL ORDER BY website_url"
+                "SELECT DISTINCT website_url FROM sessions WHERE website_url IS NOT NULL"
             ).fetchall()
 
-        result = [(r["app_class"], "app") for r in app_rows]
-        result += [(r["website_url"], "website") for r in web_rows]
-        return result
+        result = set()
+        for r in app_rows:
+            result.add((r["app_class"], "app"))
+        for r in web_rows:
+            domain = extract_domain(r["website_url"])
+            if domain:
+                result.add((domain, "website"))
+        
+        return sorted(list(result))
 
     def get_available_dates(self) -> tuple[Optional[date], Optional[date]]:
         """Get the earliest and latest dates with recorded sessions."""
@@ -633,45 +654,4 @@ class Database:
             ).fetchall()
         return [r["group_name"] for r in rows]
 
-    # ── Export ─────────────────────────────────────────────────────────
 
-    def export_csv(self, filepath: Path):
-        """Export all session data to CSV."""
-        category_map = self._get_category_map()
-
-        with self._connect() as conn:
-            rows = conn.execute(
-                """SELECT * FROM sessions ORDER BY start_time"""
-            ).fetchall()
-
-        group_map = self._get_group_map()
-
-        with open(filepath, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                "start_time",
-                "end_time",
-                "duration_seconds",
-                "app_class",
-                "app_title",
-                "website_url",
-                "category",
-                "group",
-            ])
-
-            for row in rows:
-                duration = row["end_time"] - row["start_time"]
-                identifier = row["website_url"] or row["app_class"]
-                category = category_map.get(identifier, "Uncategorized")
-                group = group_map.get(identifier, "")
-
-                writer.writerow([
-                    datetime.fromtimestamp(row["start_time"]).isoformat(),
-                    datetime.fromtimestamp(row["end_time"]).isoformat(),
-                    f"{duration:.1f}",
-                    row["app_class"],
-                    row["app_title"] or "",
-                    row["website_url"] or "",
-                    category,
-                    group,
-                ])

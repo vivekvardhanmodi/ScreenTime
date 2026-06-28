@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import { api } from '../api';
 import { Trash2 } from 'lucide-react';
 
 export default function Categories() {
@@ -10,18 +10,18 @@ export default function Categories() {
   const [identifiers, setIdentifiers] = useState([]);
 
   const fetchCategories = () => {
-    axios.get('/api/categories')
+    api.getCategories()
       .then(res => {
-        setCategories(res.data);
+        setCategories(res);
         setLoading(false);
       })
       .catch(console.error);
   };
 
   const fetchIdentifiers = () => {
-    axios.get('/api/identifiers')
+    api.getIdentifiers()
       .then(res => {
-        setIdentifiers(res.data.identifiers || []);
+        setIdentifiers(res.identifiers || []);
       })
       .catch(console.error);
   };
@@ -34,7 +34,11 @@ export default function Categories() {
   const handleAdd = (e) => {
     e.preventDefault();
     if (!newName || !newCat) return;
-    axios.post('/api/categories', { name: newName.trim(), category: newCat.trim() })
+    
+    const identifier = identifiers.find(id => id.name === newName.trim());
+    const identifierType = identifier ? identifier.type : 'app';
+    
+    api.setCategory(newName.trim(), identifierType, newCat.trim())
       .then(() => {
         setNewName('');
         setNewCat('');
@@ -44,7 +48,8 @@ export default function Categories() {
   };
 
   const handleDelete = (name) => {
-    axios.delete('/api/categories', { data: { name } })
+    if (!window.confirm(`Are you sure you want to delete the mapping for ${name}?`)) return;
+    api.deleteCategory(name)
       .then(fetchCategories)
       .catch(console.error);
   };
@@ -70,12 +75,12 @@ export default function Categories() {
               <input 
                 type="text" 
                 className="input" 
-                list="identifier-list"
+                list="category-identifier-list"
                 placeholder="e.g. youtube.com or kitty" 
                 value={newName}
                 onChange={e => setNewName(e.target.value)}
               />
-              <datalist id="identifier-list">
+              <datalist id="category-identifier-list">
                 {identifiers.map(id => (
                   <option key={id.name} value={id.name}>{id.type}</option>
                 ))}
