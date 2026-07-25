@@ -7,12 +7,21 @@ import DeviceSelector from '../components/DeviceSelector';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
+function getCategoryBadgeClass(category) {
+  const cat = (category || '').toLowerCase();
+  if (cat.includes('social')) return 'social';
+  if (cat.includes('entert')) return 'entertainment';
+  if (cat.includes('llm') || cat.includes('ai')) return 'llm';
+  if (cat.includes('dev')) return 'development';
+  if (cat.includes('util')) return 'utilities';
+  return 'uncategorized';
+}
+
 export default function HistoryPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   
-  // Default to last 7 days
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 6);
@@ -22,7 +31,7 @@ export default function HistoryPage() {
     return new Date().toISOString().split('T')[0];
   });
 
-  const [device, setDevice] = useState(''); // '' means all devices
+  const [device, setDevice] = useState('');
   const [availableDevices, setAvailableDevices] = useState([]);
 
   useEffect(() => {
@@ -57,9 +66,12 @@ export default function HistoryPage() {
   }, [startDate, endDate, device]);
 
   if (loading && !data) return <div className="page-header"><h1 className="page-title">Loading...</h1></div>;
-  if (error) return <div className="page-header"><h1 className="page-title text-red-500">{error}</h1></div>;
+  if (error) return <div className="page-header"><h1 className="page-title" style={{color: 'var(--error)'}}>{error}</h1></div>;
 
   const stats = data?.stats || [];
+  
+  const numDays = Math.max(1, Math.round((new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)) + 1);
+  const dailyAverageSeconds = (data?.total_seconds || 0) / numDays;
   
   const chartData = {
     labels: stats.slice(0, 10).map(s => s.name),
@@ -67,8 +79,8 @@ export default function HistoryPage() {
       {
         label: 'Hours',
         data: stats.slice(0, 10).map(s => (s.total_seconds / 3600).toFixed(2)),
-        backgroundColor: 'rgba(124, 58, 237, 0.8)',
-        borderRadius: 6,
+        backgroundColor: '#8083ff',
+        borderRadius: 4,
       },
     ],
   };
@@ -86,90 +98,124 @@ export default function HistoryPage() {
     },
     scales: {
       y: {
-        grid: { color: 'rgba(255, 255, 255, 0.05)' },
-        ticks: { color: '#94a3b8' }
+        grid: { color: 'rgba(255, 255, 255, 0.08)' },
+        ticks: { 
+          color: '#c7c4d7', 
+          font: { family: 'JetBrains Mono', size: 12 } 
+        }
       },
       x: {
         grid: { display: false },
-        ticks: { color: '#94a3b8' }
+        ticks: { 
+          color: '#c7c4d7', 
+          font: { family: 'Hanken Grotesk', size: 11 },
+          maxRotation: 20,
+          minRotation: 20
+        }
       }
     }
   };
 
   return (
-    <div>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+    <>
+      <div className="page-header" style={{ alignItems: 'flex-end' }}>
         <div>
           <h1 className="page-title">History</h1>
-          <p className="page-subtitle">Analyze your past activity</p>
         </div>
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <DeviceSelector devices={availableDevices} selectedDevice={device} onChange={setDevice} />
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '16px', flexWrap: 'wrap' }}>
+          <DeviceSelector devices={availableDevices} selectedDevice={device} onChange={setDevice} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <span className="form-label" style={{ marginBottom: 0 }}>START DATE</span>
+            <div className="date-input-wrapper">
+              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+              <span className="material-symbols-outlined date-input-icon">calendar_today</span>
+            </div>
           </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">Start Date</label>
-            <input type="date" className="input" value={startDate} onChange={e => setStartDate(e.target.value)} />
-          </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">End Date</label>
-            <input type="date" className="input" value={endDate} onChange={e => setEndDate(e.target.value)} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <span className="form-label" style={{ marginBottom: 0 }}>END DATE</span>
+            <div className="date-input-wrapper">
+              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
+              <span className="material-symbols-outlined date-input-icon">calendar_today</span>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="card" style={{ marginBottom: '2rem', display: 'flex', alignItems: 'center', gap: '1.5rem', background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.1) 0%, rgba(30, 41, 59, 0.5) 100%)', border: '1px solid rgba(124, 58, 237, 0.2)' }}>
-        <div style={{ flex: 1 }}>
-          <h2 style={{ fontSize: '1.1rem', color: '#94a3b8', marginBottom: '0.5rem', fontWeight: 500 }}>Total Screen Time</h2>
-          <div style={{ fontSize: '2.5rem', fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>
-            {formatTime(data?.total_seconds || 0)}
+      <div className="page-body">
+        {/* Screen Time Summary Card */}
+        <div className="glass-panel stat-card" style={{ padding: '24px', marginBottom: '24px' }}>
+          <span className="stat-label" style={{ marginBottom: '16px', display: 'block' }}>SCREEN TIME SUMMARY</span>
+          <div style={{ display: 'flex', gap: '48px', alignItems: 'flex-end', marginBottom: '16px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span className="form-label" style={{ marginBottom: '4px' }}>TOTAL</span>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: '48px', fontWeight: 700, color: 'var(--on-surface)', lineHeight: 1 }}>
+                {formatTime(data?.total_seconds || 0)}
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span className="form-label" style={{ marginBottom: '4px' }}>DAILY AVERAGE</span>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: '48px', fontWeight: 700, color: 'var(--primary)', lineHeight: 1 }}>
+                {formatTime(dailyAverageSeconds)}
+              </div>
+            </div>
           </div>
-          <p style={{ color: '#64748b', fontSize: '0.9rem', marginTop: '0.25rem' }}>
-            For {device === '' ? 'All Devices' : (device === 'hyprland-pc' ? 'PC (Hyprland)' : device === 'android-phone' ? 'Mobile (Android)' : device)}
-            {' '}between {startDate} and {endDate}
+          <p style={{ color: 'var(--on-surface-variant)', fontSize: '14px' }}>
+            For {device === '' || device === 'all' ? 'All Devices' : (device === 'hyprland-pc' ? 'PC (Hyprland)' : device === 'android-phone' ? 'Mobile (Android)' : device)} between {startDate} and {endDate}
           </p>
         </div>
-      </div>
 
-      <div className="card" style={{ marginBottom: '2rem' }}>
-        <h2 style={{ marginBottom: '1rem', fontSize: '1.2rem' }}>Top 10 Usage ({startDate} to {endDate})</h2>
-        <div className="chart-container">
-          <Bar data={chartData} options={chartOptions} />
+        <div className="grid-12">
+          {/* Chart Section */}
+          <div className="col-span-12 glass-panel flex-col" style={{ padding: '24px', marginBottom: '24px' }}>
+            <h2 className="card-title">Top 10 Usage ({startDate} to {endDate})</h2>
+            <div className="chart-container" style={{ height: '350px', width: '100%', marginTop: '16px' }}>
+              <Bar data={chartData} options={chartOptions} />
+            </div>
+          </div>
+
+          {/* Table Section */}
+          <div className="col-span-12 glass-panel flex-col" style={{ overflow: 'hidden' }}>
+            <div style={{ padding: '24px 24px 8px 24px' }}>
+              <h2 className="card-title" style={{ marginBottom: 0 }}>All Activity</h2>
+            </div>
+            <div className="table-container">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th className="bg-dark">APP / WEBSITE</th>
+                    <th className="bg-dark">CATEGORY</th>
+                    <th className="bg-dark" style={{ textAlign: 'right' }}>TOTAL TIME</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.map((item, i) => (
+                    <tr key={i} className="row-lg">
+                      <td>
+                        <div style={{ fontWeight: 500, color: 'var(--on-surface)' }}>{item.name}</div>
+                      </td>
+                      <td>
+                        <span className={`badge ${getCategoryBadgeClass(item.category)}`}>
+                          {item.category || 'Uncategorized'}
+                        </span>
+                      </td>
+                      <td style={{ fontWeight: 600, textAlign: 'right', color: 'var(--on-surface)' }}>
+                        {formatTime(item.total_seconds)}
+                      </td>
+                    </tr>
+                  ))}
+                  {stats.length === 0 && (
+                    <tr>
+                      <td colSpan="3" style={{ textAlign: 'center', color: 'var(--on-surface-variant)', padding: '24px' }}>
+                        No data for this period.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
-
-      <div className="card">
-        <h2 style={{ marginBottom: '1rem', fontSize: '1.2rem' }}>All Activity</h2>
-        <div className="table-container">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>App / Website</th>
-                <th>Category</th>
-                <th>Total Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.map((item, i) => (
-                <tr key={i}>
-                  <td>
-                    <div style={{ fontWeight: 500 }}>{item.name}</div>
-                  </td>
-                  <td>
-                    <span className="badge badge-primary">{item.category || 'Uncategorized'}</span>
-                  </td>
-                  <td style={{ fontWeight: 600 }}>{formatTime(item.total_seconds)}</td>
-                </tr>
-              ))}
-              {stats.length === 0 && (
-                <tr>
-                  <td colSpan="3" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No data for this period.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+    </>
   );
 }

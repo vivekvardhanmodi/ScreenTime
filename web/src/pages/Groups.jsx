@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
-import { Trash2 } from 'lucide-react';
 
 export default function Groups() {
   const [groups, setGroups] = useState({});
@@ -56,93 +55,110 @@ export default function Groups() {
 
   if (loading) return <div className="page-header"><h1 className="page-title">Loading...</h1></div>;
 
-  // Get unique existing groups for autocomplete
   const existingGroups = Array.from(new Set(Object.values(groups)));
 
   return (
-    <div>
+    <>
       <div className="page-header">
-        <h1 className="page-title">Groups</h1>
-        <p className="page-subtitle">Group multiple apps/domains into a single entity</p>
+        <div>
+          <h1 className="page-title">Groups</h1>
+          <p className="page-subtitle">Group multiple apps/domains into a single entity</p>
+        </div>
       </div>
 
-      <div className="grid-cards" style={{ gridTemplateColumns: '1fr 2fr' }}>
-        <div className="card" style={{ alignSelf: 'start' }}>
-          <h2 style={{ marginBottom: '1.5rem', fontSize: '1.2rem' }}>Add Grouping</h2>
-          <form onSubmit={handleAdd}>
-            <div className="form-group">
-              <label className="form-label">App Class or Domain</label>
-              <input 
-                type="text" 
-                className="input" 
-                list="group-identifier-list"
-                placeholder="e.g. google.com" 
-                value={newName}
-                onChange={e => setNewName(e.target.value)}
-              />
-              <datalist id="group-identifier-list">
-                {identifiers.map(id => (
-                  <option key={id.name} value={id.name}>{id.type}</option>
-                ))}
-              </datalist>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Group Name</label>
-              <input 
-                type="text" 
-                className="input" 
-                list="group-list"
-                placeholder="e.g. Google Services" 
-                value={newGroup}
-                onChange={e => setNewGroup(e.target.value)}
-              />
-              <datalist id="group-list">
-                {existingGroups.map(grp => (
-                  <option key={grp} value={grp} />
-                ))}
-              </datalist>
-            </div>
-            <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Add to Group</button>
-          </form>
-        </div>
+      <div className="page-body">
+        <div className="grid-12">
+          {/* Add Grouping Form */}
+          <div className="col-span-4 glass-panel flex-col" style={{ alignSelf: 'start', padding: '24px' }}>
+            <h2 className="card-title">Add Grouping</h2>
+            <form onSubmit={handleAdd} className="flex-col gap-stack-md mt-4">
+              <div>
+                <label className="form-label">APP CLASS OR DOMAIN</label>
+                <input 
+                  type="text" 
+                  className="input-dark" 
+                  list="group-identifier-list"
+                  placeholder="e.g. google.com" 
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                />
+                <datalist id="group-identifier-list">
+                  {identifiers.map(id => (
+                    <option key={id.name} value={id.name}>{id.type}</option>
+                  ))}
+                </datalist>
+              </div>
+              <div>
+                <label className="form-label">GROUP NAME</label>
+                <input 
+                  type="text" 
+                  className="input-dark" 
+                  list="group-list"
+                  placeholder="e.g. Google Services" 
+                  value={newGroup}
+                  onChange={e => setNewGroup(e.target.value)}
+                />
+                <datalist id="group-list">
+                  {existingGroups.map(grp => (
+                    <option key={grp} value={grp} />
+                  ))}
+                </datalist>
+              </div>
+              <button type="submit" className="btn-primary w-full mt-4">
+                <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>
+                ADD TO GROUP
+              </button>
+            </form>
+          </div>
 
-        <div className="card">
-          <h2 style={{ marginBottom: '1.5rem', fontSize: '1.2rem' }}>Current Groups</h2>
-          <div className="table-container">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Target (App/Domain)</th>
-                  <th>Group Name</th>
-                  <th style={{ width: '80px' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(groups).map(([name, group]) => (
-                  <tr key={name}>
-                    <td style={{ fontWeight: 500 }}>{name}</td>
-                    <td><span className="badge badge-primary" style={{ background: 'rgba(6, 182, 212, 0.15)', color: '#67e8f9', borderColor: 'rgba(6, 182, 212, 0.3)' }}>{group}</span></td>
-                    <td>
-                      <button 
-                        className="btn btn-danger" 
-                        style={{ padding: '0.4rem 0.6rem' }}
-                        onClick={() => handleDelete(name)}
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {Object.keys(groups).length === 0 && (
+          {/* Current Groups Table */}
+          <div className="col-span-8 glass-panel flex-col" style={{ overflow: 'hidden' }}>
+            <div style={{ padding: '24px 24px 8px 24px' }}>
+              <h2 className="card-title" style={{ marginBottom: 0 }}>Current Groups</h2>
+            </div>
+            <div className="table-container" style={{ flex: 1, overflowY: 'auto', maxHeight: '600px' }}>
+              <table className="table">
+                <thead>
                   <tr>
-                    <td colSpan="3" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No groups defined.</td>
+                    <th className="bg-dark">TARGET (APP/DOMAIN)</th>
+                    <th className="bg-dark">GROUP NAME</th>
+                    <th className="bg-dark" style={{ width: '80px', textAlign: 'center' }}>ACTIONS</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {Object.entries(groups).map(([name, group]) => (
+                    <tr key={name}>
+                      <td style={{ fontWeight: 500, color: 'var(--on-surface)' }}>{name}</td>
+                      <td>
+                        <span className="badge" style={{ background: 'rgba(99, 102, 241, 0.1)', color: '#818cf8', border: '1px solid rgba(99, 102, 241, 0.2)' }}>
+                          {group}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <button 
+                          className="icon-btn"
+                          onClick={() => handleDelete(name)}
+                          title="Remove Group"
+                          style={{ margin: '0 auto' }}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>delete</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {Object.keys(groups).length === 0 && (
+                    <tr>
+                      <td colSpan="3" style={{ textAlign: 'center', color: 'var(--on-surface-variant)', padding: '24px' }}>
+                        No groups defined.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

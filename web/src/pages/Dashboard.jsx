@@ -7,11 +7,21 @@ import DeviceSelector from '../components/DeviceSelector';
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
+function getCategoryBadgeClass(category) {
+  const cat = (category || '').toLowerCase();
+  if (cat.includes('social')) return 'social';
+  if (cat.includes('entert')) return 'entertainment';
+  if (cat.includes('llm') || cat.includes('ai')) return 'llm';
+  if (cat.includes('dev')) return 'development';
+  if (cat.includes('util')) return 'utilities';
+  return 'uncategorized';
+}
+
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [device, setDevice] = useState('all'); // 'all' means all devices
+  const [device, setDevice] = useState('all'); 
   const [availableDevices, setAvailableDevices] = useState([]);
 
   useEffect(() => {
@@ -36,11 +46,10 @@ export default function Dashboard() {
   }, [device]);
 
   if (loading && !data) return <div className="page-header"><h1 className="page-title">Loading...</h1></div>;
-  if (error) return <div className="page-header"><h1 className="page-title text-red-500">{error}</h1></div>;
+  if (error) return <div className="page-header"><h1 className="page-title" style={{color: 'var(--error)'}}>{error}</h1></div>;
 
   const stats = data ? (data.stats || []) : [];
   
-  // Aggregate by category for chart
   const categoryTotals = {};
   stats.forEach(item => {
     const cat = item.category || 'Uncategorized';
@@ -51,9 +60,9 @@ export default function Dashboard() {
     labels: Object.keys(categoryTotals),
     datasets: [
       {
-        data: Object.values(categoryTotals).map(v => Math.round(v / 60)), // minutes
+        data: Object.values(categoryTotals).map(v => Math.round(v / 60)), 
         backgroundColor: [
-          '#7c3aed', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#3b82f6'
+          '#8083ff', '#4edea3', '#10b981', '#ffb95f', '#ef4444', '#c0c1ff', '#0d0096'
         ],
         borderWidth: 0,
         hoverOffset: 10,
@@ -64,7 +73,7 @@ export default function Dashboard() {
   const chartOptions = {
     cutout: '75%',
     plugins: {
-      legend: { position: 'right', labels: { color: '#f8fafc', font: { family: 'Inter' } } },
+      legend: { position: 'right', labels: { color: '#e5e2e3', font: { family: 'Hanken Grotesk' } } },
       tooltip: {
         callbacks: {
           label: (context) => ` ${context.label}: ${formatTime(context.raw * 60)}`
@@ -74,69 +83,77 @@ export default function Dashboard() {
   };
 
   return (
-    <div>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+    <>
+      <div className="page-header">
         <div>
           <h1 className="page-title">Today's Overview</h1>
           <p className="page-subtitle">Your screen time for {data ? new Date(data.start_ts * 1000).toLocaleDateString() : ''}</p>
         </div>
-        <div>
-          <DeviceSelector devices={availableDevices} selectedDevice={device} onChange={setDevice} />
-        </div>
+        <DeviceSelector devices={availableDevices} selectedDevice={device} onChange={setDevice} />
       </div>
 
-      <div className="grid-cards">
-        <div className="card stat-card">
-          <div className="stat-title">Total Active Time</div>
-          <div className="stat-value">{formatTime(data.total_seconds)}</div>
-        </div>
-        <div className="card stat-card">
-          <div className="stat-title">Total Apps/Sites</div>
-          <div className="stat-value">{stats.length}</div>
-        </div>
-      </div>
-
-      <div className="grid-cards" style={{ gridTemplateColumns: '1fr 2fr' }}>
-        <div className="card">
-          <h2 style={{ marginBottom: '1rem', fontSize: '1.2rem' }}>Category Breakdown</h2>
-          <div className="chart-container" style={{ height: '280px' }}>
-            <Doughnut data={chartData} options={chartOptions} />
+      <div className="page-body">
+        {/* Metric Cards Row */}
+        <div className="grid-12 mb-gutter">
+          <div className="col-span-6 glass-panel stat-card">
+            <span className="stat-label">TOTAL ACTIVE TIME</span>
+            <div className="stat-value">{formatTime(data.total_seconds)}</div>
+          </div>
+          <div className="col-span-6 glass-panel stat-card">
+            <span className="stat-label">TOTAL APPS/SITES</span>
+            <div className="stat-value">{stats.length}</div>
           </div>
         </div>
 
-        <div className="card">
-          <h2 style={{ marginBottom: '1rem', fontSize: '1.2rem' }}>Top Usage</h2>
-          <div className="table-container">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>App / Website</th>
-                  <th>Category</th>
-                  <th>Time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats.slice(0, 8).map((item, i) => (
-                  <tr key={i}>
-                    <td>
-                      <div style={{ fontWeight: 500 }}>{item.name}</div>
-                      {item.identifier_type === 'group' && (
-                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                          {item.children?.length || 0} items grouped
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <span className="badge badge-primary">{item.category || 'Uncategorized'}</span>
-                    </td>
-                    <td style={{ fontWeight: 600 }}>{formatTime(item.total_seconds)}</td>
+        {/* Charts & Tables Row */}
+        <div className="grid-12">
+          <div className="col-span-5 glass-panel flex-col" style={{ padding: '24px' }}>
+            <h2 className="card-title">Category Breakdown</h2>
+            <div className="chart-container" style={{ marginTop: 'auto', marginBottom: 'auto' }}>
+              <Doughnut data={chartData} options={chartOptions} />
+            </div>
+          </div>
+
+          <div className="col-span-7 glass-panel flex-col" style={{ overflow: 'hidden', minHeight: '500px' }}>
+            <div style={{ padding: '24px 24px 8px 24px' }}>
+              <h2 className="card-title" style={{ marginBottom: 0 }}>Top Usage</h2>
+            </div>
+            <div className="table-container" style={{ flex: 1, overflowY: 'auto' }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th className="bg-dark" style={{ width: '50%' }}>APP / WEBSITE</th>
+                    <th className="bg-dark">CATEGORY</th>
+                    <th className="bg-dark" style={{ textAlign: 'right' }}>TIME</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {stats.slice(0, 10).map((item, i) => (
+                    <tr key={i} className={item.identifier_type === 'group' ? 'row-xl' : 'row-lg'}>
+                      <td>
+                        <div style={{ fontWeight: 500, color: 'var(--on-surface)' }}>{item.name}</div>
+                        {item.identifier_type === 'group' && (
+                          <div style={{ fontSize: '14px', color: 'var(--on-surface-variant)', marginTop: '4px' }}>
+                            {item.children?.length || 0} items grouped
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <span className={`badge ${getCategoryBadgeClass(item.category)}`}>
+                          {item.category || 'Uncategorized'}
+                        </span>
+                      </td>
+                      <td style={{ fontWeight: 600, textAlign: 'right', color: 'var(--on-surface)' }}>
+                        {formatTime(item.total_seconds)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

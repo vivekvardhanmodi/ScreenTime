@@ -1,5 +1,4 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import { LayoutDashboard, History, Tags, Combine, Scissors } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import HistoryPage from './pages/HistoryPage';
 import Categories from './pages/Categories';
@@ -11,29 +10,29 @@ function App() {
     <BrowserRouter>
       <div className="app-container">
         {/* Sidebar */}
-        <aside className="sidebar">
-          <div className="sidebar-logo">
-            <LayoutDashboard size={28} />
-            ScreenTime
+        <nav className="sidebar">
+          <div className="sidebar-header">
+            <span className="material-symbols-outlined sidebar-logo-icon" style={{ fontVariationSettings: '"FILL" 1' }}>dataset</span>
+            <span className="sidebar-title">ScreenTime</span>
           </div>
-          <nav className="nav-links">
+          <div className="nav-links">
             <NavLink to="/" className={({isActive}) => `nav-link ${isActive ? 'active' : ''}`}>
-              <LayoutDashboard size={20} /> Dashboard
+              <span className="material-symbols-outlined">dashboard</span> Dashboard
             </NavLink>
             <NavLink to="/history" className={({isActive}) => `nav-link ${isActive ? 'active' : ''}`}>
-              <History size={20} /> History
+              <span className="material-symbols-outlined">history</span> History
             </NavLink>
             <NavLink to="/categories" className={({isActive}) => `nav-link ${isActive ? 'active' : ''}`}>
-              <Tags size={20} /> Categories
+              <span className="material-symbols-outlined">category</span> Categories
             </NavLink>
             <NavLink to="/groups" className={({isActive}) => `nav-link ${isActive ? 'active' : ''}`}>
-              <Combine size={20} /> Groups
+              <span className="material-symbols-outlined">group_work</span> Groups
             </NavLink>
             <NavLink to="/rules" className={({isActive}) => `nav-link ${isActive ? 'active' : ''}`}>
-              <Scissors size={20} /> Title Rules
+              <span className="material-symbols-outlined">rule</span> Title Rules
             </NavLink>
-          </nav>
-        </aside>
+          </div>
+        </nav>
 
         {/* Main Content */}
         <main className="main-content">
