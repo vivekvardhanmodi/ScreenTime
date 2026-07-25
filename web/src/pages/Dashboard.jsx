@@ -94,7 +94,6 @@ export default function Dashboard() {
       <div className="page-body">
         {/* Metric Cards Row */}
         <div className="glass-panel stat-card" style={{ padding: '24px', marginBottom: '24px' }}>
-          <span className="stat-label" style={{ marginBottom: '16px', display: 'block' }}>TODAY'S SUMMARY</span>
           <div style={{ display: 'flex', gap: '48px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', flexDirection: 'column' }}>
               <span className="form-label" style={{ marginBottom: '4px' }}>TOTAL ACTIVE TIME</span>
