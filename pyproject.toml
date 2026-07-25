@@ -11,6 +11,7 @@ dependencies = [
     "textual>=0.40.0",
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",
+    "pywayland>=0.4.17",
 ]
 
 [project.scripts]
