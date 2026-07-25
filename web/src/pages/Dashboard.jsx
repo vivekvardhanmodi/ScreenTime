@@ -113,9 +113,9 @@ export default function Dashboard() {
 
         {/* Charts & Tables Row */}
         <div className="grid-12">
-          <div className="col-span-5 glass-panel flex-col" style={{ padding: '24px' }}>
+          <div className="col-span-5 glass-panel flex-col" style={{ padding: '24px', alignSelf: 'flex-start' }}>
             <h2 className="card-title">Category Breakdown</h2>
-            <div className="chart-container" style={{ marginTop: 'auto', marginBottom: 'auto' }}>
+            <div className="chart-container" style={{ marginTop: '32px', marginBottom: '16px' }}>
               <Doughnut data={chartData} options={chartOptions} />
             </div>
           </div>
