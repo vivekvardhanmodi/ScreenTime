@@ -128,14 +128,12 @@ export default function HistoryPage() {
             <span className="form-label" style={{ marginBottom: 0 }}>START DATE</span>
             <div className="date-input-wrapper">
               <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
-              <span className="material-symbols-outlined date-input-icon">calendar_today</span>
             </div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             <span className="form-label" style={{ marginBottom: 0 }}>END DATE</span>
             <div className="date-input-wrapper">
               <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
-              <span className="material-symbols-outlined date-input-icon">calendar_today</span>
             </div>
           </div>
         </div>

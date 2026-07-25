@@ -84,24 +84,30 @@ export default function Dashboard() {
 
   return (
     <>
-      <div className="page-header">
+      <div className="page-header" style={{ alignItems: 'flex-end' }}>
         <div>
           <h1 className="page-title">Today's Overview</h1>
-          <p className="page-subtitle">Your screen time for {data ? new Date(data.start_ts * 1000).toLocaleDateString() : ''}</p>
         </div>
         <DeviceSelector devices={availableDevices} selectedDevice={device} onChange={setDevice} />
       </div>
 
       <div className="page-body">
         {/* Metric Cards Row */}
-        <div className="grid-12 mb-gutter">
-          <div className="col-span-6 glass-panel stat-card">
-            <span className="stat-label">TOTAL ACTIVE TIME</span>
-            <div className="stat-value">{formatTime(data.total_seconds)}</div>
-          </div>
-          <div className="col-span-6 glass-panel stat-card">
-            <span className="stat-label">TOTAL APPS/SITES</span>
-            <div className="stat-value">{stats.length}</div>
+        <div className="glass-panel stat-card" style={{ padding: '24px', marginBottom: '24px' }}>
+          <span className="stat-label" style={{ marginBottom: '16px', display: 'block' }}>TODAY'S SUMMARY</span>
+          <div style={{ display: 'flex', gap: '48px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span className="form-label" style={{ marginBottom: '4px' }}>TOTAL ACTIVE TIME</span>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: '48px', fontWeight: 700, color: 'var(--on-surface)', lineHeight: 1 }}>
+                {formatTime(data.total_seconds)}
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span className="form-label" style={{ marginBottom: '4px' }}>TOTAL APPS/SITES</span>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: '48px', fontWeight: 700, color: 'var(--primary)', lineHeight: 1 }}>
+                {stats.length}
+              </div>
+            </div>
           </div>
         </div>
 

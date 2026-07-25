@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
+  color-scheme: dark;
   /* Colors - Obsidian Pro */
   --bg-main: #0A0A0B;
   --surface: #131314;
@@ -173,7 +174,7 @@ a {
 
 .page-header {
   width: 100%;
-  padding: 20px var(--margin-page) 12px;
+  padding: 12px var(--margin-page) 12px;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -186,9 +187,9 @@ a {
 
 .page-title {
   font-family: var(--font-display);
-  font-size: 40px;
-  line-height: 1.1;
-  letter-spacing: -0.04em;
+  font-size: 32px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
   font-weight: 600;
   color: var(--on-surface);
   margin-bottom: 2px;
@@ -272,7 +273,7 @@ a {
   border: 1px solid var(--glass-border);
   color: var(--on-surface);
   border-radius: 4px;
-  padding: 8px 36px 8px 12px;
+  padding: 8px 12px;
   font-family: var(--font-label);
   font-size: 14px;
   width: 100%;
@@ -287,23 +288,8 @@ a {
 }
 
 .date-input-wrapper input[type="date"]::-webkit-calendar-picker-indicator {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
   cursor: pointer;
-}
-
-.date-input-icon {
-  position: absolute;
-  right: 10px;
-  pointer-events: none;
-  color: var(--on-surface-variant);
-  font-size: 20px !important;
+  opacity: 1;
 }
 
 .input-dark:focus {
@@ -426,42 +412,6 @@ a {
 .badge.uncategorized { background: rgba(245, 158, 11, 0.1); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.2); }
 .badge.development { background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2); }
 .badge.utilities { background: rgba(99, 102, 241, 0.1); color: #6366f1; border: 1px solid rgba(99, 102, 241, 0.2); }
-
-/* Device Selector Header Pill */
-.device-selector-glass {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background-color: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  padding: 8px 16px;
-  border-radius: 8px;
-}
-
-.device-selector-label {
-  font-family: var(--font-label);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  font-weight: 500;
-  color: var(--on-surface-variant);
-  text-transform: uppercase;
-}
-
-.device-selector-select {
-  background-color: transparent;
-  border: none;
-  color: var(--on-surface);
-  font-family: var(--font-body);
-  font-size: 14px;
-  outline: none;
-  cursor: pointer;
-  padding-right: 8px;
-}
-
-select option {
-  background-color: #131314;
-  color: var(--on-surface);
-}
 
 /* Grid Layouts */
 .grid-cols-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }

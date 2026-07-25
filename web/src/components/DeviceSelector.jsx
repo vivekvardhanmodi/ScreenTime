@@ -4,12 +4,13 @@ function DeviceSelector({ devices, selectedDevice, onChange }) {
   if (devices.length === 0) return null;
 
   return (
-    <div className="device-selector-glass">
-      <span className="device-selector-label">Device:</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      <span className="form-label" style={{ marginBottom: 0 }}>DEVICE</span>
       <select 
         value={selectedDevice} 
         onChange={(e) => onChange(e.target.value)}
-        className="device-selector-select"
+        className="input-dark"
+        style={{ padding: '8px 12px', cursor: 'pointer', minWidth: '150px' }}
       >
         <option value="all">All Devices</option>
         {devices.map(d => (
