@@ -43,15 +43,6 @@ if ! command -v hyprctl &>/dev/null; then
     warn "hyprctl not found — Hyprland may not be running or installed."
 fi
 
-if ! command -v swayidle &>/dev/null; then
-    warn "swayidle not found. Installing..."
-    echo -e "  ${YELLOW}Run: sudo pacman -S swayidle${NC}"
-    echo -n "  Install now? [Y/n] "
-    read -r answer
-    if [[ "$answer" != "n" && "$answer" != "N" ]]; then
-        sudo pacman -S --noconfirm swayidle
-    fi
-fi
 
 ok "Prerequisites checked"
 

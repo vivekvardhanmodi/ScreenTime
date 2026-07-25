@@ -10,7 +10,7 @@ Track exactly how much time you spend in every app and website. Works entirely o
 
 - **Tracks every app** you use — terminals, editors, browsers, everything
 - **Tracks websites in Chrome & Firefox** — YouTube, GitHub, Reddit show up individually, not just "Google Chrome"
-- **Ignores idle time** — if you walk away, the clock stops (90s timeout, matching your hypridle config)
+- **Ignores idle time** — if you walk away, the clock stops by detecting screen power state (DPMS). Leverages your native idle manager.
 - **Stores everything forever** — look up what you were doing on any date, weeks or years from now
 - **Groups apps** — combine `foot` + `kitty` into "Terminal", or `youtube.com` + YouTube PWA into "YouTube"
 - **Custom categories** — organize apps into "Development", "Entertainment", etc.
@@ -24,7 +24,6 @@ Track exactly how much time you spend in every app and website. Works entirely o
 
 - **Arch Linux with Hyprland** (Wayland compositor)
 - **Python 3.11+** (`sudo pacman -S python`)
-- **swayidle** (`sudo pacman -S swayidle`)
 - **Google Chrome** and/or **Firefox** (for website tracking)
 
 ### Install
@@ -197,7 +196,7 @@ The daemon is designed to be invisible:
 
 | Metric | Value |
 |--------|-------|
-| **Memory** | ~26 MB (daemon) + ~3 MB (swayidle) |
+| **Memory** | ~26 MB (daemon) |
 | **CPU** | ~2 seconds per 35 minutes of runtime |
 | **Threads** | 1 (single-threaded async) |
 | **Architecture** | Event-driven (no polling) |
@@ -214,7 +213,7 @@ screentime/
 │   ├── daemon.py             # Background daemon (asyncio orchestrator)
 │   ├── api.py                # FastAPI web server and static file hosting
 │   ├── tracker.py            # Hyprland IPC window tracking
-│   ├── idle.py               # swayidle idle detection (90s timeout)
+│   ├── idle.py               # DPMS screen state tracking (Wayland protocol / IPC polling)
 │   ├── database.py           # SQLite operations
 │   ├── browser_host.py       # Browser native messaging host
 │   └── tui/                  # Main TUI application and views
@@ -245,9 +244,6 @@ tail -n 30 ~/.local/share/screentime/daemon.log
 
 # Make sure Hyprland is running
 echo $HYPRLAND_INSTANCE_SIGNATURE
-
-# Make sure swayidle is installed
-which swayidle
 ```
 
 ### Browser websites not tracking
@@ -279,9 +275,8 @@ sqlite3 ~/.local/share/screentime/screentime.db "SELECT COUNT(*) FROM sessions;"
 
 ### Idle detection not working
 ```bash
-# Test swayidle manually
-swayidle -w timeout 10 'echo IDLE' resume 'echo ACTIVE'
-# Wait 10 seconds without touching anything — should print IDLE
+# Check if your screen turns off when idle (handled by your native idle manager).
+# The tracker listens for Wayland DPMS state changes or polls Hyprland monitor status.
 ```
 
 ---
