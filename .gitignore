@@ -9,3 +9,10 @@ build/
 *.log
 *.tmp
 .env
+
+# Ignored config and tests
+config/
+test_payload.json
+audit_reports/
+designs/
+test_*.py
