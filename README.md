@@ -157,7 +157,7 @@ screentimed &
 pkill -f screentimed
 
 # View live logs
-tail -f ~/.local/share/screentime/daemon.log
+tail -f ~/.local/share/screentime/logs/daemon.log
 ```
 
 ---
@@ -167,7 +167,7 @@ tail -f ~/.local/share/screentime/daemon.log
 | File | Path | Purpose |
 |------|------|---------|
 | **Database** | `~/.local/share/screentime/screentime.db` | All your usage data, groups, categories |
-| **Daemon log** | `~/.local/share/screentime/daemon.log` | Daemon debug log |
+| **Daemon log** | `~/.local/share/screentime/logs/daemon.log` | Daemon debug log |
 | **Chrome URL state** | `$XDG_RUNTIME_DIR/screentime/chrome_url` | Current Chrome tab (ephemeral) |
 | **Firefox URL state** | `$XDG_RUNTIME_DIR/screentime/firefox_url` | Current Firefox tab (ephemeral) |
 | **Daemon PID** | `$XDG_RUNTIME_DIR/screentime/daemon.pid` | Running daemon PID (ephemeral) |
@@ -210,7 +210,7 @@ The daemon is designed to be invisible:
 ### Daemon won't start
 ```bash
 # Check logs
-tail -n 30 ~/.local/share/screentime/daemon.log
+tail -n 30 ~/.local/share/screentime/logs/daemon.log
 
 # Make sure Hyprland is running
 echo $HYPRLAND_INSTANCE_SIGNATURE
