@@ -14,6 +14,7 @@ Track exactly how much time you spend in every app and website. Works entirely o
 - **Stores everything forever** — look up what you were doing on any date, weeks or years from now
 - **Groups apps** — combine `foot` + `kitty` into "Terminal", or `youtube.com` + YouTube PWA into "YouTube"
 - **Custom categories** — organize apps into "Development", "Entertainment", etc.
+- **Title rules** — split app windows into separate tracking entities based on window title prefixes
 - **CSV export** — dump all your data for analysis
 
 ---
@@ -24,6 +25,7 @@ Track exactly how much time you spend in every app and website. Works entirely o
 
 - **Arch Linux with Hyprland** (Wayland compositor)
 - **Python 3.11+** (`sudo pacman -S python`)
+- **Node.js (v18+) & npm** (`sudo pacman -S nodejs npm`) — for building the Web App
 - **Google Chrome** and/or **Firefox** (for website tracking)
 
 ### Install
@@ -37,8 +39,9 @@ chmod +x install.sh
 
 The install script will:
 1. Create a Python virtual environment
-2. Install dependencies (`textual`)
-3. Install native messaging hosts for Chrome and Firefox
+2. Install Python dependencies
+3. Build the React Web App frontend (`web/dist`)
+4. Install native messaging hosts for Chrome and Firefox
 
 ### Set Up Browser Extension (for website tracking)
 
@@ -104,16 +107,14 @@ screentime
 
 ### Views & Features
 
-
-| Tab | What it shows |
-|-----|--------------|
-| **Today** | Live stats for today — total time + per-app breakdown |
-| **Daily** | Browse any historical date with ◀ ▶ navigation |
-| **Weekly** | Week view with per-day totals + app breakdown |
-| **Monthly** | Month view with per-day totals + app breakdown |
-| **Groups** | Combine multiple apps into one (e.g., foot + kitty = Terminal) |
-| **Categories** | Organize apps into custom categories |
-| **Export** | Export all data to CSV |
+| View | Web App | TUI | Description |
+|------|---------|-----|-------------|
+| **Dashboard / Today** | ✅ | ✅ | Live stats for today — total time, category breakdown, top usage |
+| **History / Daily / Weekly / Monthly** | ✅ | ✅ | Browse historical dates and custom date ranges |
+| **Categories** | ✅ | ✅ | Organize apps into custom categories (Development, Entertainment, etc.) |
+| **Groups** | ✅ | ✅ | Combine multiple apps into one (e.g., foot + kitty = Terminal) |
+| **Title Rules** | ✅ | ✅ | Create rules to split app tracking based on window titles |
+| **Export** | — | ✅ | Export all data to CSV |
 
 ### Keyboard Shortcuts
 

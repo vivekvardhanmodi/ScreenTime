@@ -43,6 +43,9 @@ if ! command -v hyprctl &>/dev/null; then
     warn "hyprctl not found — Hyprland may not be running or installed."
 fi
 
+if ! command -v npm &>/dev/null; then
+    warn "npm not found. Node.js & npm are recommended to build the Web App (sudo pacman -S nodejs npm)."
+fi
 
 ok "Prerequisites checked"
 
@@ -63,6 +66,16 @@ info "Installing Python dependencies..."
 pip install --upgrade pip -q
 pip install -e "$SCRIPT_DIR" -q
 ok "Dependencies installed"
+
+# ── Build Web App Frontend ───────────────────────────────────────────
+
+info "Building Web App frontend..."
+if command -v npm &>/dev/null; then
+    (cd "$SCRIPT_DIR/web" && npm install --silent && npm run build)
+    ok "Web App frontend built"
+else
+    warn "Skipping Web App build because npm is not installed. Run 'cd web && npm install && npm run build' after installing npm."
+fi
 
 # ── Create data directory ─────────────────────────────────────────────
 
