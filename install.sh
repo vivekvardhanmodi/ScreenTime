@@ -54,12 +54,22 @@ fi
 # 3. Check for Wayland development headers (required to compile pywayland)
 if [[ ! -f "/usr/share/wayland/wayland.xml" ]]; then
     warn "Wayland protocol headers (/usr/share/wayland/wayland.xml) not found."
-    info "Installing wayland and wayland-protocols via pacman..."
 
     if command -v pacman &>/dev/null; then
+        info "Installing wayland and wayland-protocols via pacman..."
         $SUDO pacman -S --needed --noconfirm wayland wayland-protocols base-devel
+    elif command -v apt-get &>/dev/null; then
+        info "Installing libwayland-dev and wayland-protocols via apt..."
+        $SUDO apt-get update
+        $SUDO apt-get install -y libwayland-dev wayland-protocols python3-dev pkg-config build-essential
+    elif command -v dnf &>/dev/null; then
+        info "Installing wayland-devel and wayland-protocols-devel via dnf..."
+        $SUDO dnf install -y wayland-devel wayland-protocols-devel python3-devel
+    elif command -v zypper &>/dev/null; then
+        info "Installing wayland-devel and wayland-protocols-devel via zypper..."
+        $SUDO zypper install -y wayland-devel wayland-protocols-devel python3-devel pkgconf
     else
-        error "pacman not found. This installer currently supports Arch Linux."
+        error "Supported package manager (pacman/apt/dnf/zypper) not found. Please install wayland protocols manually."
         exit 1
     fi
 
@@ -96,6 +106,10 @@ fi
 source "$VENV_DIR/bin/activate"
 
 info "Installing Python dependencies..."
+# openSUSE puts Wayland headers in a subdirectory; help pywayland find them
+if [[ -f "/usr/include/wayland/wayland-client-core.h" ]]; then
+    export CFLAGS="-I/usr/include/wayland ${CFLAGS:-}"
+fi
 pip install --upgrade pip -q
 pip install -e "$SCRIPT_DIR" -q
 ok "Dependencies installed"

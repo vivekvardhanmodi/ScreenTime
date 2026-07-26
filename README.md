@@ -23,9 +23,10 @@ Track exactly how much time you spend in every app and website. Works entirely o
 
 ### Prerequisites
 
-- **Arch Linux with Hyprland** (Wayland compositor)
-- **Python 3.11+** (`sudo pacman -S python`)
-- **Node.js (v18+) & npm** (`sudo pacman -S nodejs npm`) — for building the Web App
+- **Linux with Hyprland** (Wayland compositor)
+- **Wayland Protocols & Development Headers** (Installed automatically by `install.sh` on Arch, Fedora, Debian/Ubuntu, and openSUSE)
+- **Python 3.11+**
+- **Node.js (v18+) & npm** — for building the Web App
 - **Google Chrome** and/or **Firefox** (for website tracking)
 
 ### Install
