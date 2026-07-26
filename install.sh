@@ -30,15 +30,48 @@ echo "  ║    App Usage Tracker for Linux    ║"
 echo "  ╚═══════════════════════════════════╝"
 echo -e "${NC}"
 
-# ── Check prerequisites ──────────────────────────────────────────────
+# ── Check & Install System Dependencies ───────────────────────────────
 
-info "Checking prerequisites..."
+info "Checking system prerequisites..."
 
+# 1. Determine if we need 'sudo' (Non-Root on laptop vs Root inside Docker)
+SUDO=""
+if [[ $EUID -ne 0 ]]; then
+    if command -v sudo &>/dev/null; then
+        SUDO="sudo"
+    else
+        error "This script requires root privileges or 'sudo' to install missing dependencies."
+        exit 1
+    fi
+fi
+
+# 2. Check for python3
 if ! command -v python3 &>/dev/null; then
-    error "python3 not found. Install it: sudo pacman -S python"
+    error "python3 is not installed. Install it: sudo pacman -S python"
     exit 1
 fi
 
+# 3. Check for Wayland development headers (required to compile pywayland)
+if [[ ! -f "/usr/share/wayland/wayland.xml" ]]; then
+    warn "Wayland protocol headers (/usr/share/wayland/wayland.xml) not found."
+    info "Installing wayland and wayland-protocols via pacman..."
+
+    if command -v pacman &>/dev/null; then
+        $SUDO pacman -S --needed --noconfirm wayland wayland-protocols base-devel
+    else
+        error "pacman not found. This installer currently supports Arch Linux."
+        exit 1
+    fi
+
+    # Double check that the file now exists
+    if [[ ! -f "/usr/share/wayland/wayland.xml" ]]; then
+        error "Failed to locate /usr/share/wayland/wayland.xml even after running pacman."
+        exit 1
+    fi
+    ok "Wayland development packages installed successfully."
+fi
+
+# 4. Warnings for optional tools
 if ! command -v hyprctl &>/dev/null; then
     warn "hyprctl not found — Hyprland may not be running or installed."
 fi
@@ -47,7 +80,7 @@ if ! command -v npm &>/dev/null; then
     warn "npm not found. Node.js & npm are recommended to build the Web App (sudo pacman -S nodejs npm)."
 fi
 
-ok "Prerequisites checked"
+ok "Prerequisites checked successfully."
 
 # ── Create virtual environment ────────────────────────────────────────
 
