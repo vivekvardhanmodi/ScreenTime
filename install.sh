@@ -139,15 +139,26 @@ chmod +x "$SCRIPT_DIR/screentime/browser_host.py"
 # ── Chrome ──
 CHROME_NMH_DIR="$HOME/.config/google-chrome/NativeMessagingHosts"
 mkdir -p "$CHROME_NMH_DIR"
+CHROME_MANIFEST="$CHROME_NMH_DIR/$NATIVE_HOST_NAME.json"
 
-cat > "$CHROME_NMH_DIR/$NATIVE_HOST_NAME.json" << EOF
+CURRENT_EXT_ID="EXTENSION_ID_PLACEHOLDER"
+if [[ -f "$CHROME_MANIFEST" ]]; then
+    # Extract existing ID to avoid overwriting a configured setup
+    EXISTING_ID=$(grep -o 'chrome-extension://[^/]*' "$CHROME_MANIFEST" | sed 's/chrome-extension:\/\///' || true)
+    if [[ -n "$EXISTING_ID" && "$EXISTING_ID" != "EXTENSION_ID_PLACEHOLDER" ]]; then
+        CURRENT_EXT_ID="$EXISTING_ID"
+        info "Preserving existing Chrome extension ID: $CURRENT_EXT_ID"
+    fi
+fi
+
+cat > "$CHROME_MANIFEST" << EOF
 {
   "name": "$NATIVE_HOST_NAME",
   "description": "ScreenTime browser URL tracker",
   "path": "$SCRIPT_DIR/screentime/browser_host.py",
   "type": "stdio",
   "allowed_origins": [
-    "chrome-extension://EXTENSION_ID_PLACEHOLDER/"
+    "chrome-extension://$CURRENT_EXT_ID/"
   ]
 }
 EOF
