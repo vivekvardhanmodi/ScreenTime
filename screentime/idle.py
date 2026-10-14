@@ -275,7 +275,6 @@ class IdleDetector:
         self,
         on_idle: Callable[[], Awaitable[None]],
         on_active: Callable[[], Awaitable[None]],
-        timeout: int = None,  # Unused, kept for API compatibility with old swayidle logic
     ):
         self._on_idle = on_idle
         self._on_active = on_active
