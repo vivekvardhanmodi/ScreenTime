@@ -43,22 +43,25 @@ def _browser_url_file(window_class: str) -> Path:
     return get_runtime_dir() / "chrome_url"
 
 
-def read_browser_url(window_class: str) -> Optional[str]:
+async def read_browser_url(window_class: str) -> Optional[str]:
     """Read the current browser tab URL from the state file.
 
     Returns url or None if unavailable.
     """
-    try:
-        url_file = _browser_url_file(window_class)
-        if not url_file.exists():
+    def _read_and_parse():
+        try:
+            url_file = _browser_url_file(window_class)
+            if not url_file.exists():
+                return None
+
+            with open(url_file) as f:
+                data = json.load(f)
+
+            return data.get("url")
+        except (json.JSONDecodeError, IOError, KeyError):
             return None
 
-        with open(url_file) as f:
-            data = json.load(f)
-
-        return data.get("url")
-    except (json.JSONDecodeError, IOError, KeyError):
-        return None
+    return await asyncio.to_thread(_read_and_parse)
 
 
 # ── Session Manager ───────────────────────────────────────────────────
@@ -224,7 +227,7 @@ class SessionManager:
             if self._is_idle or self._is_lid_closed:
                 return
 
-            url = read_browser_url(window.app_class)
+            url = await read_browser_url(window.app_class)
             if url != self._current_url:
                 # Update the existing session in-place (no close+reopen)
                 self._current_url = url
@@ -249,7 +252,7 @@ class SessionManager:
             return
 
         now = time.time()
-        new_url = read_browser_url(self._current_window.app_class)
+        new_url = await read_browser_url(self._current_window.app_class)
         if new_url != self._current_url:
             # Website changed within browser — close old session, start new
             self._close_current_session(now)
