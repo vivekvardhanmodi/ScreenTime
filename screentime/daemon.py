@@ -118,9 +118,9 @@ class SessionManager:
 
             # Deduplicate: Skip if both the raw window and the resolved class haven't changed.
             if (
-                self._current_window is not None
-                and window.app_class == self._current_window.app_class
-                and effective_class == self._current_session_app_class
+                    self._current_window is not None
+                    and window.app_class == self._current_window.app_class
+                    and effective_class == self._current_session_app_class
             ):
                 return
 
@@ -163,7 +163,7 @@ class SessionManager:
             self._is_idle = False
             if self._is_lid_closed:
                 return  # Don't resume if lid is still closed
-            
+
             now = time.time()
 
             # Re-query the current window since it may have changed during idle
@@ -197,7 +197,7 @@ class SessionManager:
             self._is_lid_closed = False
             if self._is_idle:
                 return  # Still idle, wait for on_active
-            
+
             now = time.time()
             window = await get_active_window()
             self._current_window = window
@@ -240,11 +240,11 @@ class SessionManager:
         Must be called while holding self._lock.
         """
         if (
-            self._current_session_id is None
-            or self._is_idle
-            or self._is_lid_closed
-            or not self._current_window
-            or not self._is_browser(self._current_window)
+                self._current_session_id is None
+                or self._is_idle
+                or self._is_lid_closed
+                or not self._current_window
+                or not self._is_browser(self._current_window)
         ):
             return
 
@@ -292,7 +292,7 @@ class SessionManager:
         """Update the current session's end_time (crash resilience)."""
         async with self._lock:
             now = time.time()
-            
+
             # Detect sleep/suspend (if time jumped by more than 30s between heartbeats)
             if hasattr(self, '_last_time'):
                 jump = now - self._last_time
@@ -322,11 +322,11 @@ class SessionManager:
                 log.info("Shutdown: closed final session")
 
     def _start_session(
-        self,
-        now: float,
-        window: WindowInfo,
-        effective_class: str,
-        url: Optional[str],
+            self,
+            now: float,
+            window: WindowInfo,
+            effective_class: str,
+            url: Optional[str],
     ):
         """Start a new session in the database."""
         self._current_session_id = self.db.insert_session(
@@ -358,9 +358,9 @@ class SessionManager:
         """Check if a window is a supported browser (Chrome, Chrome PWA, or Firefox)."""
         wc = window.app_class.lower()
         return (
-            get_chrome_window_class() in wc
-            or wc.startswith("chrome-")
-            or get_firefox_window_class() in wc
+                get_chrome_window_class() in wc
+                or wc.startswith("chrome-")
+                or get_firefox_window_class() in wc
         )
 
 
@@ -456,25 +456,25 @@ async def run_daemon():
             if not lid_paths:
                 log.info("No ACPI lid switch found. Lid tracking disabled.")
                 return
-            
+
             lid_path = lid_paths[0]
             was_closed = False
-            
+
             while not shutdown_event.is_set():
                 try:
                     with open(lid_path) as f:
                         state = f.read().strip()
                     is_closed = "closed" in state
-                    
+
                     if is_closed and not was_closed:
                         await session_mgr.on_lid_closed()
                     elif not is_closed and was_closed:
                         await session_mgr.on_lid_opened()
-                        
+
                     was_closed = is_closed
                 except Exception:
                     pass
-                
+
                 try:
                     await asyncio.wait_for(shutdown_event.wait(), timeout=1.0)
                 except asyncio.TimeoutError:
@@ -517,10 +517,10 @@ def main():
     parser.add_argument("--log-console", action="store_true", help="Log to console")
     parser.add_argument("--log-level", type=str, help="Override log level (e.g. DEBUG, INFO)")
     args = parser.parse_args()
-    
+
     from screentime.config import get_config
     from screentime.loggers import setup_logging
-    
+
     config = get_config()
     setup_logging(config, "daemon.log", log_console=args.log_console, log_level=args.log_level)
 

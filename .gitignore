@@ -9,6 +9,7 @@ build/
 *.log
 *.tmp
 .env
+.idea
 
 # Ignored config and tests
 config/

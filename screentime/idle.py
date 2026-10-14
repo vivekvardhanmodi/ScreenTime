@@ -1,7 +1,7 @@
 """Idle detection for Linux compositors.
 
 Detects user idle/active transitions by tracking the physical screen state (DPMS).
-This delegates all inhibitor logic (e.g., VLC playing, D-Bus ScreenSaver calls) 
+This delegates all inhibitor logic (e.g., VLC playing, D-Bus ScreenSaver calls)
 to the user's native idle manager (like hypridle, swayidle, or KDE/GNOME native),
 which ultimately controls the screen state.
 """
@@ -11,12 +11,17 @@ import json
 import logging
 import os
 import socket
-from typing import Callable, Awaitable, Optional
+from collections.abc import Awaitable, Callable
 
 try:
     from pywayland.client import Display
+
     from screentime.wayland_bindings.wayland import WlOutput
-    from screentime.wayland_bindings.wlr_output_power_management_unstable_v1 import ZwlrOutputPowerManagerV1, ZwlrOutputPowerV1
+    from screentime.wayland_bindings.wlr_output_power_management_unstable_v1 import (
+        ZwlrOutputPowerManagerV1,
+        ZwlrOutputPowerV1,
+    )
+
     WAYLAND_AVAILABLE = True
 except ImportError:
     WAYLAND_AVAILABLE = False
@@ -26,6 +31,7 @@ log = logging.getLogger(__name__)
 
 class IdleBackend:
     """Base class for idle detection backends."""
+
     is_idle: bool = False
 
     async def start(self):
@@ -37,7 +43,7 @@ class IdleBackend:
 
 class HyprctlPollingBackend(IdleBackend):
     """Detects idle state by polling Hyprland's dpmsStatus via its Unix socket.
-    
+
     This is a fallback for when the Wayland protocol cannot be used directly,
     but is highly efficient (~0.1ms per poll) because it connects directly
     to the Hyprland IPC socket instead of spawning subprocesses.
@@ -53,34 +59,39 @@ class HyprctlPollingBackend(IdleBackend):
         self._on_active = on_active
         self._poll_interval = poll_interval
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self.is_idle = False
         self._socket_path = self._get_socket_path()
 
-    def _get_socket_path(self) -> Optional[str]:
+    def _get_socket_path(self) -> str | None:
         """Resolve the Hyprland command socket path."""
         his = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
         if not his:
-            log.warning("HYPRLAND_INSTANCE_SIGNATURE not set. Are you running Hyprland?")
+            log.warning(
+                "HYPRLAND_INSTANCE_SIGNATURE not set. Are you running Hyprland?"
+            )
             return None
-            
+
         xdg_runtime = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
         path = os.path.join(xdg_runtime, "hypr", his, ".socket.sock")
-        
+
         if not os.path.exists(path):
             log.warning("Hyprland socket not found at: %s", path)
             return None
-            
+
         return path
 
     async def start(self):
         if not self._socket_path:
             log.error("Cannot start Hyprland DPMS polling: socket not available")
             return
-            
+
         self._running = True
         self._task = asyncio.create_task(self._run())
-        log.info("Hyprland DPMS polling backend started (interval=%.1fs)", self._poll_interval)
+        log.info(
+            "Hyprland DPMS polling backend started (interval=%.1fs)",
+            self._poll_interval,
+        )
 
     async def stop(self):
         self._running = False
@@ -109,14 +120,14 @@ class HyprctlPollingBackend(IdleBackend):
             s.settimeout(1.0)
             s.connect(self._socket_path)
             s.sendall(b"j/monitors")
-            
+
             buf = b""
             while True:
                 chunk = s.recv(4096)
                 if not chunk:
                     break
                 buf += chunk
-                
+
         data = json.loads(buf.decode("utf-8"))
         # If any monitor has dpmsStatus == true, the screen is active.
         return any(m.get("dpmsStatus", False) for m in data)
@@ -126,45 +137,46 @@ class HyprctlPollingBackend(IdleBackend):
         while self._running:
             try:
                 screen_active = await self._check_dpms()
-                
+
                 # State transition to IDLE (screen off)
                 if not screen_active and not self.is_idle:
                     log.info("DPMS is off. User went idle.")
                     self.is_idle = True
                     await self._on_idle()
-                    
+
                 # State transition to ACTIVE (screen on)
                 elif screen_active and self.is_idle:
                     log.info("DPMS is on. User became active.")
                     self.is_idle = False
                     await self._on_active()
-                    
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 log.error("Idle detector error: %s", e)
-                
+
             if self._running:
                 await asyncio.sleep(self._poll_interval)
 
 
 class WlrOutputPowerBackend(IdleBackend):
     """Detects idle state via zwlr_output_power_manager_v1 Wayland protocol.
-    
+
     This is the ideal event-driven backend for wlroots compositors.
     It connects to the Wayland socket, listens for DPMS state changes,
     and runs asynchronously using asyncio file descriptor polling.
     """
+
     def __init__(
         self,
         on_idle: Callable[[], Awaitable[None]],
-        on_active: Callable[[], Awaitable[None]]
+        on_active: Callable[[], Awaitable[None]],
     ):
         self._on_idle = on_idle
         self._on_active = on_active
         self._running = False
         self.is_idle = False
-        
+
         self.display = None
         self.registry = None
         self.power_manager = None
@@ -180,8 +192,8 @@ class WlrOutputPowerBackend(IdleBackend):
 
     def _on_mode(self, power, mode):
         # mode 0 = off (idle), 1 = on (active)
-        is_screen_on = (mode == ZwlrOutputPowerV1.mode.on)
-        
+        is_screen_on = mode == ZwlrOutputPowerV1.mode.on
+
         if not is_screen_on and not self.is_idle:
             log.info("Wayland DPMS event: Screen OFF. User went idle.")
             self.is_idle = True
@@ -194,32 +206,34 @@ class WlrOutputPowerBackend(IdleBackend):
     async def start(self):
         if not WAYLAND_AVAILABLE:
             raise RuntimeError("pywayland or protocol bindings not available")
-            
+
         self.display = Display()
         self.display.connect()
         self.registry = self.display.get_registry()
-        
+
         # Clear previous state
         self.power_manager = None
         self.outputs.clear()
         self.power_objects.clear()
-        
+
         self.registry.dispatcher["global"] = self._registry_global
-        
+
         self.display.dispatch(block=True)
         self.display.roundtrip()
-        
+
         if not self.power_manager:
             self.display.disconnect()
-            raise RuntimeError("Compositor does not support zwlr_output_power_manager_v1")
-            
+            raise RuntimeError(
+                "Compositor does not support zwlr_output_power_manager_v1"
+            )
+
         for output in self.outputs:
             power = self.power_manager.get_output_power(output)
             power.dispatcher["mode"] = self._on_mode
             self.power_objects.append(power)
-            
+
         self.display.roundtrip()
-        
+
         self._running = True
         loop = asyncio.get_running_loop()
         loop.add_reader(self.display.get_fd(), self._read_events)
@@ -243,16 +257,17 @@ class WlrOutputPowerBackend(IdleBackend):
 
 class DBusIdleBackend(IdleBackend):
     """Detects idle state via GNOME/KDE ScreenSaver D-Bus signals.
-    
+
     This provides event-driven idle detection for non-wlroots compositors.
     """
+
     def __init__(self, on_idle, on_active):
         raise NotImplementedError("D-Bus idle backend not yet implemented.")
 
 
 class IdleDetector:
     """Detects user idle/active transitions across different compositors.
-    
+
     Abstracts away the underlying implementation details (Wayland, D-Bus, polling).
     """
 
@@ -260,7 +275,7 @@ class IdleDetector:
         self,
         on_idle: Callable[[], Awaitable[None]],
         on_active: Callable[[], Awaitable[None]],
-        timeout: int = None, # Unused, kept for API compatibility with old swayidle logic
+        timeout: int = None,  # Unused, kept for API compatibility with old swayidle logic
     ):
         self._on_idle = on_idle
         self._on_active = on_active
@@ -277,8 +292,10 @@ class IdleDetector:
                 self._backend = backend
                 return
             except Exception as e:
-                log.warning("Wayland event-driven backend unavailable: %s. Falling back...", e)
-                
+                log.warning(
+                    "Wayland event-driven backend unavailable: %s. Falling back...", e
+                )
+
         # 2. Fallback to Hyprctl Polling
         self._backend = HyprctlPollingBackend(self._on_idle, self._on_active)
 
@@ -290,9 +307,11 @@ class IdleDetector:
         """Start idle detection."""
         if not self._backend:
             await self._init_backend()
-            
-        log.info("Starting idle detector (auto-selected backend: %s)", 
-                 self._backend.__class__.__name__)
+
+        log.info(
+            "Starting idle detector (auto-selected backend: %s)",
+            self._backend.__class__.__name__,
+        )
         await self._backend.start()
 
     async def stop(self):
