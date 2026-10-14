@@ -60,21 +60,21 @@ class Database:
         with self._connect() as conn:
             cursor = conn.execute("PRAGMA table_info(sessions)")
             columns = [row["name"] for row in cursor.fetchall()]
-            
+
             # Safely rename website_domain to website_url if it exists
             if "website_domain" in columns:
                 try:
                     conn.execute("ALTER TABLE sessions RENAME COLUMN website_domain TO website_url")
                 except sqlite3.OperationalError:
                     pass
-            
+
             # Safely drop website_title if it exists
             if "website_title" in columns:
                 try:
                     conn.execute("ALTER TABLE sessions DROP COLUMN website_title")
                 except sqlite3.OperationalError:
                     pass
-                    
+
             # Safely add device_id if it doesn't exist
             if "device_id" not in columns and len(columns) > 0:
                 try:
@@ -301,7 +301,7 @@ class Database:
                 query += " AND device_id = ?"
                 params.append(device_id)
             query += " ORDER BY start_time"
-            
+
             rows = conn.execute(query, tuple(params)).fetchall()
 
         # Aggregate by effective identifier (website_url or app_class)
@@ -420,9 +420,13 @@ class Database:
         ).timestamp()
         return self.get_total_active_time(start_ts, end_ts, device_id)
 
-    def get_daily_totals_in_range(self, start_date: date, end_date: date, device_id: Optional[str] = None) -> dict[date, float]:
+    def get_daily_totals_in_range(
+        self, start_date: date, end_date: date, device_id: Optional[str] = None
+    ) -> dict[date, float]:
         """Get per-day total screen time for a date range in a single sweep."""
-        start_ts = datetime(start_date.year, start_date.month, start_date.day).timestamp()
+        start_ts = datetime(
+            start_date.year, start_date.month, start_date.day
+        ).timestamp()
         end_ts = datetime(
             end_date.year, end_date.month, end_date.day, 23, 59, 59, 999999
         ).timestamp()
@@ -439,28 +443,52 @@ class Database:
             rows = conn.execute(query, tuple(params)).fetchall()
 
         result = {}
+        day_bounds = {}
+        intervals_per_day = {}
+
         current = start_date
         while current <= end_date:
             result[current] = 0.0
+            d_start = datetime(
+                current.year, current.month, current.day
+            ).timestamp()
+            d_end = datetime(
+                current.year, current.month, current.day, 23, 59, 59, 999999
+            ).timestamp()
+            day_bounds[current] = (d_start, d_end)
+            intervals_per_day[current] = []
             current += timedelta(days=1)
 
         if not rows:
             return result
 
-        for d in result.keys():
-            d_start = datetime(d.year, d.month, d.day).timestamp()
-            d_end = datetime(d.year, d.month, d.day, 23, 59, 59, 999999).timestamp()
-            
-            intervals = []
-            for row in rows:
-                effective_start = max(row["start_time"], d_start)
-                effective_end = min(row["end_time"], d_end)
-                if effective_end > effective_start:
-                    intervals.append([effective_start, effective_end])
-                    
+        # ⚡ Bolt Optimization: Avoid O(D * N) by iterating over rows once
+        # and determining intersecting days.
+        for row in rows:
+            row_start = row["start_time"]
+            row_end = row["end_time"]
+
+            row_start_d = datetime.fromtimestamp(row_start).date()
+            row_end_d = datetime.fromtimestamp(row_end).date()
+
+            current_d = max(row_start_d, start_date)
+            end_d = min(row_end_d, end_date)
+
+            while current_d <= end_d:
+                if current_d in day_bounds:
+                    d_start, d_end = day_bounds[current_d]
+                    effective_start = max(row_start, d_start)
+                    effective_end = min(row_end, d_end)
+                    if effective_end > effective_start:
+                        intervals_per_day[current_d].append(
+                            [effective_start, effective_end]
+                        )
+                current_d += timedelta(days=1)
+
+        for d, intervals in intervals_per_day.items():
             if not intervals:
                 continue
-                
+
             intervals.sort(key=lambda x: x[0])
             merged = [intervals[0]]
             for current_interval in intervals[1:]:
@@ -469,7 +497,7 @@ class Database:
                     last[1] = max(last[1], current_interval[1])
                 else:
                     merged.append(current_interval)
-            
+
             result[d] = sum(m[1] - m[0] for m in merged)
 
         return result
@@ -493,7 +521,7 @@ class Database:
             domain = extract_domain(r["website_url"])
             if domain:
                 result.add((domain, "website"))
-        
+
         return sorted(list(result))
 
     def get_available_dates(self) -> tuple[Optional[date], Optional[date]]:
