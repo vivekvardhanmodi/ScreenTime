@@ -460,10 +460,13 @@ async def run_daemon():
             lid_path = lid_paths[0]
             was_closed = False
             
+            def read_lid_state():
+                with open(lid_path) as f:
+                    return f.read().strip()
+
             while not shutdown_event.is_set():
                 try:
-                    with open(lid_path) as f:
-                        state = f.read().strip()
+                    state = await asyncio.to_thread(read_lid_state)
                     is_closed = "closed" in state
                     
                     if is_closed and not was_closed:
