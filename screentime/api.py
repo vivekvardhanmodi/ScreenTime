@@ -255,8 +255,12 @@ def catch_all(full_path: str):
     if full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="API route not found")
         
-    file_path = os.path.abspath(os.path.join(WEB_DIR, full_path))
-    if not file_path.startswith(os.path.abspath(WEB_DIR)):
+    # Resolve absolute paths to prevent path traversal
+    abs_web_dir = os.path.abspath(WEB_DIR)
+    file_path = os.path.abspath(os.path.join(abs_web_dir, full_path))
+
+    # Ensure the resolved path is strictly within the WEB_DIR
+    if os.path.commonpath([abs_web_dir, file_path]) != abs_web_dir:
         raise HTTPException(status_code=403, detail="Forbidden")
 
     if os.path.isfile(file_path):
