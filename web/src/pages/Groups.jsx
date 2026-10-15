@@ -73,8 +73,9 @@ export default function Groups() {
             <h2 className="card-title">Add Grouping</h2>
             <form onSubmit={handleAdd} className="flex-col gap-stack-md mt-4">
               <div>
-                <label className="form-label">APP CLASS OR DOMAIN</label>
+                <label htmlFor="group-app-class-domain-input" className="form-label">APP CLASS OR DOMAIN</label>
                 <input 
+                  id="group-app-class-domain-input"
                   type="text" 
                   className="input-dark" 
                   list="group-identifier-list"
@@ -89,8 +90,9 @@ export default function Groups() {
                 </datalist>
               </div>
               <div>
-                <label className="form-label">GROUP NAME</label>
+                <label htmlFor="group-name-input" className="form-label">GROUP NAME</label>
                 <input 
+                  id="group-name-input"
                   type="text" 
                   className="input-dark" 
                   list="group-list"
@@ -139,6 +141,7 @@ export default function Groups() {
                           className="icon-btn"
                           onClick={() => handleDelete(name)}
                           title="Remove Group"
+                          aria-label={`Remove group for ${name}`}
                           style={{ margin: '0 auto' }}
                         >
                           <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>delete</span>
