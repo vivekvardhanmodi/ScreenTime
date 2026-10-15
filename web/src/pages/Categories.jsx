@@ -83,8 +83,9 @@ export default function Categories() {
             <h2 className="card-title">Add Mapping</h2>
             <form onSubmit={handleAdd} className="flex-col gap-stack-md mt-4">
               <div>
-                <label className="form-label">APP CLASS OR DOMAIN</label>
+                <label htmlFor="app-class-domain-input" className="form-label">APP CLASS OR DOMAIN</label>
                 <input 
+                  id="app-class-domain-input"
                   type="text" 
                   className="input-dark" 
                   list="category-identifier-list"
@@ -99,8 +100,9 @@ export default function Categories() {
                 </datalist>
               </div>
               <div>
-                <label className="form-label">CATEGORY</label>
+                <label htmlFor="category-input" className="form-label">CATEGORY</label>
                 <input 
+                  id="category-input"
                   type="text" 
                   className="input-dark" 
                   list="category-list"
@@ -149,6 +151,7 @@ export default function Categories() {
                           className="icon-btn"
                           onClick={() => handleDelete(name)}
                           title="Remove Mapping"
+                          aria-label={`Remove mapping for ${name}`}
                           style={{ margin: '0 auto' }}
                         >
                           <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>delete</span>

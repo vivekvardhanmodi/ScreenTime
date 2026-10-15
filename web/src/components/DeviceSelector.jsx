@@ -5,8 +5,9 @@ function DeviceSelector({ devices, selectedDevice, onChange }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-      <span className="form-label" style={{ marginBottom: 0 }}>DEVICE</span>
+      <label htmlFor="device-select" className="form-label" style={{ marginBottom: 0 }}>DEVICE</label>
       <select 
+        id="device-select"
         value={selectedDevice} 
         onChange={(e) => onChange(e.target.value)}
         className="input-dark"
