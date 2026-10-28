@@ -164,22 +164,23 @@ def pull_sessions(since: float = 0.0):
 def sync_sessions(req: SyncRequest):
     """Sync multiple sessions from a remote device."""
     now = time.time()
-    valid_sessions = 0
+    valid_sessions = []
     for session in req.sessions:
         if session.start_time > session.end_time:
             continue
         if session.end_time > now + 3600: # allow for slight time drift
             continue
-        db.insert_session_if_not_exists(
-            start_time=session.start_time,
-            end_time=session.end_time,
-            app_class=session.app_class,
-            app_title=session.app_title,
-            website_url=session.website_url,
-            device_id=req.device_id
-        )
-        valid_sessions += 1
-    return {"status": "success", "synced": valid_sessions}
+        valid_sessions.append((
+            session.start_time,
+            session.end_time,
+            session.app_class,
+            session.app_title,
+            session.website_url,
+            req.device_id
+        ))
+    if valid_sessions:
+        db.insert_sessions_if_not_exists(valid_sessions)
+    return {"status": "success", "synced": len(valid_sessions)}
 
 
 @app.get("/api/categories")

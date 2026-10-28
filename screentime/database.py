@@ -201,6 +201,24 @@ class Database:
             )
             return cursor.lastrowid
 
+    def insert_sessions_if_not_exists(
+        self,
+        sessions: list[tuple[float, float, str, Optional[str], Optional[str], str]]
+    ) -> int:
+        """Insert or update multiple sessions if they exist."""
+        with self._connect() as conn:
+            cursor = conn.executemany(
+                """INSERT INTO sessions
+                   (start_time, end_time, app_class, app_title, website_url, device_id)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(start_time, app_class, device_id)
+                   DO UPDATE SET end_time=excluded.end_time,
+                                 app_title=excluded.app_title,
+                                 website_url=excluded.website_url""",
+                sessions,
+            )
+            return cursor.rowcount
+
     def insert_session_if_not_exists(
         self,
         start_time: float,
