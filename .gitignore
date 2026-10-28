@@ -16,5 +16,5 @@ config/
 test_payload.json
 audit_reports/
 designs/
-test_*.py
+/test_*.py
 build-firefox-xpi.sh
