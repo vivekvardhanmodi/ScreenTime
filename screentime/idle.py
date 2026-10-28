@@ -34,6 +34,34 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
+def _parse_monitor_dpms(buf: bytes) -> bool | None:
+    """Parse Hyprland JSON monitor response and determine DPMS state.
+
+    Returns:
+        True: at least one monitor is confirmed on (active).
+        False: all monitors are confirmed off via valid dpmsStatus=False (idle).
+        None: response is empty, malformed, or contains monitors without a boolean dpmsStatus.
+    """
+    try:
+        text = buf.decode("utf-8")
+        data = json.loads(text)
+        if not isinstance(data, list) or len(data) == 0:
+            return None
+
+        all_off = True
+        for m in data:
+            if not isinstance(m, dict) or not isinstance(m.get("dpmsStatus"), bool):
+                # Monitor entry is invalid or missing boolean dpmsStatus
+                all_off = False
+                continue
+            if m["dpmsStatus"]:
+                return True
+
+        return False if all_off else None
+    except (UnicodeDecodeError, ValueError, TypeError, AttributeError):
+        return None
+
+
 class IdleBackend:
     """Base class for idle detection backends."""
 
@@ -50,8 +78,7 @@ class HyprctlPollingBackend(IdleBackend):
     """Detects idle state by polling Hyprland's dpmsStatus via its Unix socket.
 
     This is a fallback for when the Wayland protocol cannot be used directly,
-    but is highly efficient (~0.1ms per poll) because it connects directly
-    to the Hyprland IPC socket instead of spawning subprocesses.
+    connecting directly to the Hyprland IPC socket.
     """
 
     def __init__(
@@ -66,31 +93,123 @@ class HyprctlPollingBackend(IdleBackend):
         self._running = False
         self._task: asyncio.Task | None = None
         self.is_idle = False
-        self._socket_path = self._get_socket_path()
+        self._socket_path: str | None = None
 
-    def _get_socket_path(self) -> str | None:
-        """Resolve the Hyprland command socket path."""
-        his = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
-        if not his:
-            log.warning(
-                "HYPRLAND_INSTANCE_SIGNATURE not set. Are you running Hyprland?"
-            )
-            return None
+    def _query_socket(
+        self, path: str, timeout: float = 1.0, max_bytes: int = 65536
+    ) -> bool | None:
+        """Query a socket path for monitor DPMS state with bounded size and timeout.
 
+        Returns:
+            True / False on valid query, or None if response is unparseable.
+        """
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            s.connect(path)
+            s.sendall(b"j/monitors")
+
+            buf = b""
+            while len(buf) < max_bytes:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                buf += chunk
+
+        return _parse_monitor_dpms(buf)
+
+    def _find_live_socket(self) -> tuple[str, bool | None] | None:
+        """Discover and return a responsive Hyprland command socket and its initial state.
+
+        Prefers the env-specified signature first. If absent or unresponsive,
+        probes other active sockets in newest-first order.
+        """
         xdg_runtime = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-        path = os.path.join(xdg_runtime, "hypr", his, ".socket.sock")
+        dirs_to_check = [os.path.join(xdg_runtime, "hypr"), "/tmp/hypr"]
 
-        if not os.path.exists(path):
-            log.warning("Hyprland socket not found at: %s", path)
+        # 1. Prefer HYPRLAND_INSTANCE_SIGNATURE if set
+        his = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+        if his:
+            for base in dirs_to_check:
+                path = os.path.join(base, his, ".socket.sock")
+                if os.path.exists(path):
+                    try:
+                        state = self._query_socket(path, timeout=0.5)
+                        return path, state
+                    except (OSError, socket.timeout):
+                        pass
+
+        # 2. Discover other candidates sorted newest-first
+        candidates: list[tuple[float, str]] = []
+        for base in dirs_to_check:
+            if not os.path.isdir(base):
+                continue
+            try:
+                for entry in os.listdir(base):
+                    sock = os.path.join(base, entry, ".socket.sock")
+                    if os.path.exists(sock):
+                        try:
+                            mtime = os.path.getmtime(sock)
+                            candidates.append((mtime, sock))
+                        except OSError:
+                            pass
+            except OSError:
+                pass
+
+        if not candidates:
             return None
 
-        return path
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        seen: set[str] = set()
+        for _, path in candidates:
+            if path in seen:
+                continue
+            seen.add(path)
+            try:
+                state = self._query_socket(path, timeout=0.5)
+                return path, state
+            except (OSError, socket.timeout):
+                continue
+
+        return None
+
+    def _sync_check_dpms(self) -> bool | None:
+        """Synchronously query the socket for monitor DPMS status.
+
+        Returns:
+            True if any monitor is on.
+            False if all monitors are off.
+            None if the status cannot be determined.
+        """
+        if self._socket_path:
+            try:
+                return self._query_socket(self._socket_path)
+            except (OSError, socket.timeout) as e:
+                log.debug(
+                    "DPMS query connection failed on %s: %s", self._socket_path, e
+                )
+                self._socket_path = None
+
+        # Socket was unset or connection failed; discover a live socket
+        live = self._find_live_socket()
+        if not live:
+            return None
+
+        path, state = live
+        self._socket_path = path
+        return state
+
+    async def _check_dpms(self) -> bool | None:
+        """Query the socket for monitor status."""
+        try:
+            return await asyncio.to_thread(self._sync_check_dpms)
+        except Exception as e:
+            log.debug("Failed to check DPMS state: %s", e)
+            return None
 
     async def start(self):
-        if not self._socket_path:
-            log.error("Cannot start Hyprland DPMS polling: socket not available")
+        """Start polling Hyprland DPMS state."""
+        if self._running:
             return
-
         self._running = True
         self._task = asyncio.create_task(self._run())
         log.info(
@@ -100,38 +219,15 @@ class HyprctlPollingBackend(IdleBackend):
 
     async def stop(self):
         self._running = False
-        if self._task:
+        current_task = asyncio.current_task()
+        if self._task and self._task is not current_task and not self._task.done():
             self._task.cancel()
             try:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        self._task = None
         log.info("Hyprland DPMS polling backend stopped")
-
-    async def _check_dpms(self) -> bool:
-        """Query the socket for monitor status. Returns True if ANY screen is on."""
-        try:
-            return await asyncio.to_thread(self._sync_check_dpms)
-        except Exception as e:
-            log.debug("Failed to check DPMS state: %s", e)
-            return True
-
-    def _sync_check_dpms(self) -> bool:
-        """Synchronously query the socket."""
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.settimeout(1.0)
-            s.connect(self._socket_path)
-            s.sendall(b"j/monitors")
-
-            buf = b""
-            while True:
-                chunk = s.recv(4096)
-                if not chunk:
-                    break
-                buf += chunk
-
-        data = json.loads(buf.decode("utf-8"))
-        return any(m.get("dpmsStatus", False) for m in data)
 
     async def _run(self):
         """Poll DPMS state and trigger callbacks."""
@@ -139,15 +235,20 @@ class HyprctlPollingBackend(IdleBackend):
             try:
                 screen_active = await self._check_dpms()
 
-                if not screen_active and not self.is_idle:
+                # State transition to IDLE (screen off)
+                if screen_active is False and not self.is_idle:
                     log.info("DPMS is off. User went idle.")
                     self.is_idle = True
                     await self._on_idle()
 
-                elif screen_active and self.is_idle:
+                # State transition to ACTIVE (screen on)
+                elif screen_active is True and self.is_idle:
                     log.info("DPMS is on. User became active.")
                     self.is_idle = False
                     await self._on_active()
+
+                # If screen_active is None: compositor is unavailable or state unknown.
+                # Maintain existing is_idle state; do not trigger transitions.
 
             except asyncio.CancelledError:
                 break
@@ -234,6 +335,7 @@ class WlrOutputPowerBackend(IdleBackend):
             display.connect()
             registry = display.get_registry()
 
+            # Clear previous state
             self.power_manager = None
             self.outputs.clear()
             self.power_objects.clear()
@@ -317,6 +419,7 @@ class WlrOutputPowerBackend(IdleBackend):
         """Stop polling immediately to avoid 100% CPU spin and notify lifecycle manager."""
         self._cleanup_display()
         if self._on_disconnect:
+            # Retain task reference so it is not garbage collected mid-execution
             self._disconnect_task = asyncio.create_task(self._on_disconnect())
 
     async def stop(self):
@@ -337,11 +440,21 @@ class WlrOutputPowerBackend(IdleBackend):
 
 
 class DBusIdleBackend(IdleBackend):
+    """Detects idle state via GNOME/KDE ScreenSaver D-Bus signals.
+
+    This provides event-driven idle detection for non-wlroots compositors.
+    """
+
     def __init__(self, on_idle, on_active):
         raise NotImplementedError("D-Bus idle backend not yet implemented.")
 
 
 class IdleDetector:
+    """Detects user idle/active transitions across different compositors.
+
+    Abstracts away the underlying implementation details (Wayland, D-Bus, polling).
+    """
+
     def __init__(
         self,
         on_idle: Callable[[], Awaitable[None]],
@@ -349,37 +462,103 @@ class IdleDetector:
     ):
         self._on_idle = on_idle
         self._on_active = on_active
-        self._backend = None
-
-    async def _init_backend(self):
-        if WAYLAND_AVAILABLE:
-            try:
-                backend = WlrOutputPowerBackend(self._on_idle, self._on_active)
-                await backend.start()
-                await backend.stop()
-                self._backend = backend
-                return
-            except Exception as e:
-                log.warning(
-                    "Wayland event-driven backend unavailable: %s. Falling back...", e
-                )
-
-        self._backend = HyprctlPollingBackend(self._on_idle, self._on_active)
+        self._backend: IdleBackend | None = None
+        self._running: bool = False
+        self._lock = asyncio.Lock()
 
     @property
     def is_idle(self) -> bool:
         return self._backend.is_idle if self._backend else False
 
-    async def start(self):
-        if not self._backend:
-            await self._init_backend()
-
-        log.info(
-            "Starting idle detector (auto-selected backend: %s)",
-            self._backend.__class__.__name__,
+    async def _on_wayland_disconnect(self):
+        """Handle runtime Wayland disconnection by falling back to polling."""
+        if not self._running:
+            return
+        log.warning(
+            "Wayland DPMS backend disconnected at runtime. Falling back to Hyprctl polling..."
         )
-        await self._backend.start()
+        await self._switch_to_polling(already_stopped=True)
+
+    async def _switch_to_polling(self, already_stopped: bool = False):
+        """Switch idle detection to Hyprctl polling backend.
+
+        Args:
+            already_stopped: Set to True if the caller already tore down the previous backend
+                             (e.g. WlrOutputPowerBackend on disconnect), avoiding redundant teardown.
+        """
+        async with self._lock:
+            if not self._running:
+                return
+
+            prev_is_idle = self.is_idle
+            if self._backend and not already_stopped:
+                try:
+                    await self._backend.stop()
+                except Exception as e:
+                    log.warning("Error stopping previous backend: %s", e)
+
+            backend = HyprctlPollingBackend(self._on_idle, self._on_active)
+            backend.is_idle = prev_is_idle
+            self._backend = backend
+            await self._backend.start()
+            log.info(
+                "Active idle backend switched to: %s",
+                self._backend.__class__.__name__,
+            )
+
+    async def start(self):
+        """Start idle detection with the best available backend."""
+        async with self._lock:
+            if self._running:
+                return
+            self._running = True
+
+            try:
+                # 1. Try Event-driven Wayland Protocol
+                if WAYLAND_AVAILABLE:
+                    try:
+                        backend = WlrOutputPowerBackend(
+                            self._on_idle,
+                            self._on_active,
+                            on_disconnect=self._on_wayland_disconnect,
+                        )
+                        await backend.start()
+                        self._backend = backend
+                        log.info(
+                            "Starting idle detector (auto-selected backend: %s)",
+                            self._backend.__class__.__name__,
+                        )
+                        return
+                    except Exception as e:
+                        log.warning(
+                            "Wayland event-driven backend unavailable: %s. Falling back to Hyprctl polling...",
+                            e,
+                        )
+
+                # 2. Fallback to Hyprctl Polling
+                backend = HyprctlPollingBackend(self._on_idle, self._on_active)
+                await backend.start()
+                self._backend = backend
+                log.info(
+                    "Starting idle detector (auto-selected backend: %s)",
+                    self._backend.__class__.__name__,
+                )
+            except Exception:
+                # Roll back state if both backends fail to start
+                self._running = False
+                if self._backend:
+                    try:
+                        await self._backend.stop()
+                    finally:
+                        self._backend = None
+                raise
 
     async def stop(self):
-        if self._backend:
-            await self._backend.stop()
+        """Stop idle detection."""
+        async with self._lock:
+            self._running = False
+            if self._backend:
+                try:
+                    await self._backend.stop()
+                finally:
+                    self._backend = None
