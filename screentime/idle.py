@@ -12,6 +12,7 @@ import logging
 import os
 import socket
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 try:
     from pywayland.client import Display
@@ -24,6 +25,10 @@ try:
 
     WAYLAND_AVAILABLE = True
 except ImportError:
+    Display = None  # type: ignore[assignment,misc]
+    WlOutput = None  # type: ignore[assignment,misc]
+    ZwlrOutputPowerManagerV1 = None  # type: ignore[assignment,misc]
+    ZwlrOutputPowerV1 = None  # type: ignore[assignment,misc]
     WAYLAND_AVAILABLE = False
 
 log = logging.getLogger(__name__)
@@ -106,12 +111,9 @@ class HyprctlPollingBackend(IdleBackend):
     async def _check_dpms(self) -> bool:
         """Query the socket for monitor status. Returns True if ANY screen is on."""
         try:
-            # We use an executor because socket operations are blocking,
-            # though the latency is < 1ms, it's safer for the asyncio loop.
             return await asyncio.to_thread(self._sync_check_dpms)
         except Exception as e:
             log.debug("Failed to check DPMS state: %s", e)
-            # Default to active if we can't read it
             return True
 
     def _sync_check_dpms(self) -> bool:
@@ -129,7 +131,6 @@ class HyprctlPollingBackend(IdleBackend):
                 buf += chunk
 
         data = json.loads(buf.decode("utf-8"))
-        # If any monitor has dpmsStatus == true, the screen is active.
         return any(m.get("dpmsStatus", False) for m in data)
 
     async def _run(self):
@@ -138,13 +139,11 @@ class HyprctlPollingBackend(IdleBackend):
             try:
                 screen_active = await self._check_dpms()
 
-                # State transition to IDLE (screen off)
                 if not screen_active and not self.is_idle:
                     log.info("DPMS is off. User went idle.")
                     self.is_idle = True
                     await self._on_idle()
 
-                # State transition to ACTIVE (screen on)
                 elif screen_active and self.is_idle:
                     log.info("DPMS is on. User became active.")
                     self.is_idle = False
@@ -171,17 +170,24 @@ class WlrOutputPowerBackend(IdleBackend):
         self,
         on_idle: Callable[[], Awaitable[None]],
         on_active: Callable[[], Awaitable[None]],
+        on_disconnect: Callable[[], Awaitable[None]] | None = None,
     ):
         self._on_idle = on_idle
         self._on_active = on_active
+        self._on_disconnect = on_disconnect
         self._running = False
         self.is_idle = False
 
-        self.display = None
+        self.display: Display | None = None
         self.registry = None
         self.power_manager = None
         self.outputs = []
         self.power_objects = []
+        self._output_states: dict[Any, bool] = {}
+
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._fd: int | None = None
+        self._disconnect_task: asyncio.Task | None = None
 
     def _registry_global(self, registry, id_, interface, version):
         if interface == "zwlr_output_power_manager_v1":
@@ -190,87 +196,152 @@ class WlrOutputPowerBackend(IdleBackend):
             output = registry.bind(id_, WlOutput, version)
             self.outputs.append(output)
 
+    def _trigger_callback(self, coro: Awaitable[None], name: str):
+        async def _wrapper():
+            try:
+                await coro
+            except Exception as e:
+                log.error("Unhandled exception in %s callback: %s", name, e)
+
+        return asyncio.create_task(_wrapper())
+
     def _on_mode(self, power, mode):
-        # mode 0 = off (idle), 1 = on (active)
-        is_screen_on = mode == ZwlrOutputPowerV1.mode.on
+        try:
+            is_screen_on = (
+                mode == ZwlrOutputPowerV1.mode.on if ZwlrOutputPowerV1 else mode == 1
+            )
+            self._output_states[power] = is_screen_on
+            any_screen_on = any(self._output_states.values())
 
-        if not is_screen_on and not self.is_idle:
-            log.info("Wayland DPMS event: Screen OFF. User went idle.")
-            self.is_idle = True
-            asyncio.create_task(self._on_idle())
-        elif is_screen_on and self.is_idle:
-            log.info("Wayland DPMS event: Screen ON. User became active.")
-            self.is_idle = False
-            asyncio.create_task(self._on_active())
+            if not any_screen_on and not self.is_idle:
+                log.info("Wayland DPMS event: All screens OFF. User went idle.")
+                self.is_idle = True
+                self._trigger_callback(self._on_idle(), "on_idle")
+            elif any_screen_on and self.is_idle:
+                log.info("Wayland DPMS event: Screen ON. User became active.")
+                self.is_idle = False
+                self._trigger_callback(self._on_active(), "on_active")
+        except Exception as e:
+            log.error("Error handling Wayland DPMS mode event: %s", e)
 
-    async def start(self):
+    def _connect(self):
+        """Establish connection to Wayland display and bind power objects."""
         if not WAYLAND_AVAILABLE:
             raise RuntimeError("pywayland or protocol bindings not available")
 
-        self.display = Display()
-        self.display.connect()
-        self.registry = self.display.get_registry()
+        display = Display()
+        try:
+            display.connect()
+            registry = display.get_registry()
 
-        # Clear previous state
+            self.power_manager = None
+            self.outputs.clear()
+            self.power_objects.clear()
+            self._output_states.clear()
+
+            registry.dispatcher["global"] = self._registry_global
+
+            display.dispatch(block=True)
+            display.roundtrip()
+
+            if not self.power_manager:
+                raise RuntimeError(
+                    "Compositor does not support zwlr_output_power_manager_v1"
+                )
+
+            for output in self.outputs:
+                power = self.power_manager.get_output_power(output)
+                self._output_states[power] = True
+                power.dispatcher["mode"] = self._on_mode
+                self.power_objects.append(power)
+
+            display.roundtrip()
+            self.display = display
+            self.registry = registry
+            self._fd = display.get_fd()
+        except Exception:
+            try:
+                display.disconnect()
+            except Exception:
+                pass
+            self._cleanup_display()
+            raise
+
+    def _cleanup_display(self):
+        """Safely unregister the file descriptor and disconnect the display."""
+        if self._loop and self._fd is not None:
+            try:
+                self._loop.remove_reader(self._fd)
+            except Exception:
+                pass
+            self._fd = None
+
+        if self.display:
+            try:
+                self.display.disconnect()
+            except Exception:
+                pass
+            self.display = None
+
+        self.registry = None
         self.power_manager = None
         self.outputs.clear()
         self.power_objects.clear()
+        self._output_states.clear()
+        self._running = False
 
-        self.registry.dispatcher["global"] = self._registry_global
-
-        self.display.dispatch(block=True)
-        self.display.roundtrip()
-
-        if not self.power_manager:
-            self.display.disconnect()
-            raise RuntimeError(
-                "Compositor does not support zwlr_output_power_manager_v1"
-            )
-
-        for output in self.outputs:
-            power = self.power_manager.get_output_power(output)
-            power.dispatcher["mode"] = self._on_mode
-            self.power_objects.append(power)
-
-        self.display.roundtrip()
-
-        self._running = True
-        loop = asyncio.get_running_loop()
-        loop.add_reader(self.display.get_fd(), self._read_events)
-        log.info("Wayland DPMS event-driven backend started (0 CPU usage)")
+    async def start(self):
+        if self._running:
+            return
+        self._loop = asyncio.get_running_loop()
+        self._connect()
+        try:
+            self._loop.add_reader(self._fd, self._read_events)
+            self._running = True
+            log.info("Wayland DPMS event-driven backend started (0 CPU usage)")
+        except Exception:
+            self._cleanup_display()
+            raise
 
     def _read_events(self):
+        if self.display is None:
+            return
         try:
             self.display.read()
             self.display.dispatch(block=False)
         except Exception as e:
-            log.error(f"Wayland read error: {e}")
+            log.warning("Wayland display read/dispatch error: %s. Cleaning up...", e)
+            self._handle_disconnect()
+
+    def _handle_disconnect(self):
+        """Stop polling immediately to avoid 100% CPU spin and notify lifecycle manager."""
+        self._cleanup_display()
+        if self._on_disconnect:
+            self._disconnect_task = asyncio.create_task(self._on_disconnect())
 
     async def stop(self):
-        if self._running:
-            self._running = False
-            loop = asyncio.get_running_loop()
-            loop.remove_reader(self.display.get_fd())
-            self.display.disconnect()
-            log.info("Wayland DPMS event-driven backend stopped")
+        self._cleanup_display()
+        current_task = asyncio.current_task()
+        if (
+            self._disconnect_task
+            and self._disconnect_task is not current_task
+            and not self._disconnect_task.done()
+        ):
+            self._disconnect_task.cancel()
+            try:
+                await self._disconnect_task
+            except asyncio.CancelledError:
+                pass
+        self._disconnect_task = None
+        log.info("Wayland DPMS event-driven backend stopped")
 
 
 class DBusIdleBackend(IdleBackend):
-    """Detects idle state via GNOME/KDE ScreenSaver D-Bus signals.
-
-    This provides event-driven idle detection for non-wlroots compositors.
-    """
-
     def __init__(self, on_idle, on_active):
         raise NotImplementedError("D-Bus idle backend not yet implemented.")
 
 
 class IdleDetector:
-    """Detects user idle/active transitions across different compositors.
-
-    Abstracts away the underlying implementation details (Wayland, D-Bus, polling).
-    """
-
     def __init__(
         self,
         on_idle: Callable[[], Awaitable[None]],
@@ -281,11 +352,9 @@ class IdleDetector:
         self._backend = None
 
     async def _init_backend(self):
-        # 1. Try Event-driven Wayland Protocol
         if WAYLAND_AVAILABLE:
             try:
                 backend = WlrOutputPowerBackend(self._on_idle, self._on_active)
-                # Test connection and protocol support
                 await backend.start()
                 await backend.stop()
                 self._backend = backend
@@ -295,7 +364,6 @@ class IdleDetector:
                     "Wayland event-driven backend unavailable: %s. Falling back...", e
                 )
 
-        # 2. Fallback to Hyprctl Polling
         self._backend = HyprctlPollingBackend(self._on_idle, self._on_active)
 
     @property
@@ -303,7 +371,6 @@ class IdleDetector:
         return self._backend.is_idle if self._backend else False
 
     async def start(self):
-        """Start idle detection."""
         if not self._backend:
             await self._init_backend()
 
@@ -314,5 +381,5 @@ class IdleDetector:
         await self._backend.start()
 
     async def stop(self):
-        """Stop idle detection."""
-        await self._backend.stop()
+        if self._backend:
+            await self._backend.stop()
