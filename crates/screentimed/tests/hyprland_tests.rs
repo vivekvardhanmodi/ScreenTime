@@ -223,11 +223,9 @@ async fn test_window_tracker_streaming_events_and_title_commas() {
 
     let (mut client_stream, _) = listener2.accept().await.unwrap();
 
-    // Initial query should arrive first
     let initial = event_rx.recv().await.unwrap();
     assert_eq!(initial, Some(WindowInfo::new("foot", "shell")));
 
-    // Send streaming events with commas in titles and unfocused
     let events = [
         "activewindow>>firefox,Mozilla Firefox - PR #42, Ready\n",
         "activewindow>>code,src/main.rs - screentime, edited\n",
@@ -281,10 +279,8 @@ async fn test_window_tracker_reconnection_resilience() {
 
     tracker.start(event_tx).await.unwrap();
 
-    // First connection: accept, send event, then drop connection (EOF)
     {
         let (mut stream1, _) = listener2.accept().await.unwrap();
-        // Consume initial query (None)
         let _ = event_rx.recv().await.unwrap();
 
         stream1
@@ -294,12 +290,9 @@ async fn test_window_tracker_reconnection_resilience() {
 
         let ev1 = event_rx.recv().await.unwrap();
         assert_eq!(ev1, Some(WindowInfo::new("alacritty", "session 1")));
-        // Dropping stream1 triggers EOF for tracker
     }
 
-    // Second connection: tracker reconnects automatically
     let (mut stream2, _) = listener2.accept().await.unwrap();
-    // Reconnect may query socket1 again (None)
     let _ = event_rx.recv().await.unwrap();
 
     stream2
@@ -334,19 +327,16 @@ async fn test_idle_detector_dpms_streaming_and_polling() {
 
     let (mut client_stream, _) = listener2.accept().await.unwrap();
 
-    // Initial state from socket1 should be Active
     let initial = idle_rx.recv().await.unwrap();
     assert_eq!(initial, IdleState::Active);
     assert!(!idle.is_idle());
 
-    // Send DPMS 0 (screen off -> Idle)
     client_stream.write_all(b"dpms>>0\n").await.unwrap();
 
     let ev1 = idle_rx.recv().await.unwrap();
     assert_eq!(ev1, IdleState::Idle);
     assert!(idle.is_idle());
 
-    // Send DPMS 1 (screen on -> Active)
     client_stream.write_all(b"dpms>>1\n").await.unwrap();
 
     let ev2 = idle_rx.recv().await.unwrap();
@@ -407,34 +397,26 @@ async fn test_hyprland_tracker_and_idle_with_session_manager() {
             .unwrap();
     });
 
-    // Accept tracker socket2 connection
     let (mut sock2_tracker, _) = listener2.accept().await.unwrap();
-    // Accept idle detector socket2 connection
     let (mut sock2_idle, _) = listener2.accept().await.unwrap();
 
-    // Give event loop time to process initial active window
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Send active window change
     sock2_tracker
         .write_all(b"activewindow>>firefox,Mozilla Firefox - Rust\n")
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Send browser URL
     url_tx.send("https://crates.io".to_string()).await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Send DPMS off event
     sock2_idle.write_all(b"dpms>>off\n").await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Send shutdown
     shutdown_tx.send(()).await.unwrap();
     session_loop.await.unwrap();
 
-    // Verify session recorded in isolated DB
     let history = db_handle
         .get_sessions_in_range(0.0, f64::MAX)
         .await
