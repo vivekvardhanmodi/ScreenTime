@@ -10,19 +10,38 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tempfile::tempdir;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use wayland_protocols_wlr::foreign_toplevel::v1::client::zwlr_foreign_toplevel_handle_v1::State;
 
-// ============================================================================
-// Unit Tests: Toplevel Parsing, Latching & Recalculation
-// ============================================================================
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+
+struct EnvGuard {
+    key: &'static str,
+    original: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, val: &str) -> Self {
+        let original = std::env::var(key).ok();
+        std::env::set_var(key, val);
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        if let Some(ref val) = self.original {
+            std::env::set_var(self.key, val);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
 
 #[test]
 fn test_parse_state_activated() {
-    // Empty state array
     assert!(!parse_state_activated(&[]));
 
-    // Non-activated states
     let maximized = (State::Maximized as u32).to_ne_bytes();
     assert!(!parse_state_activated(&maximized));
 
@@ -32,24 +51,20 @@ fn test_parse_state_activated() {
     let fullscreen = (State::Fullscreen as u32).to_ne_bytes();
     assert!(!parse_state_activated(&fullscreen));
 
-    // Activated state
     let activated = (State::Activated as u32).to_ne_bytes();
     assert!(parse_state_activated(&activated));
 
-    // Combination of states: [Maximized, Activated]
     let mut combo = Vec::new();
     combo.extend_from_slice(&maximized);
     combo.extend_from_slice(&activated);
     assert!(parse_state_activated(&combo));
 
-    // Combination without Activated: [Maximized, Fullscreen, Minimized]
     let mut combo_no_active = Vec::new();
     combo_no_active.extend_from_slice(&maximized);
     combo_no_active.extend_from_slice(&fullscreen);
     combo_no_active.extend_from_slice(&minimized);
     assert!(!parse_state_activated(&combo_no_active));
 
-    // Odd / truncated byte slices
     assert!(!parse_state_activated(&[2, 0]));
     assert!(!parse_state_activated(&[2, 0, 0]));
 }
@@ -58,22 +73,18 @@ fn test_parse_state_activated() {
 fn test_toplevel_latching() {
     let mut data = ToplevelData::default();
 
-    // Initial state is uncommitted and default
     assert_eq!(data.app_id, None);
     assert_eq!(data.title, None);
     assert!(!data.is_active);
 
-    // Buffer pending attributes
     data.pending_app_id = Some("firefox".to_string());
     data.pending_title = Some("Google Search".to_string());
     data.pending_is_active = true;
 
-    // Committed attributes must remain unchanged before commit()
     assert_eq!(data.app_id, None);
     assert_eq!(data.title, None);
     assert!(!data.is_active);
 
-    // Call commit() on atomic done event
     data.commit();
     assert_eq!(data.app_id.as_deref(), Some("firefox"));
     assert_eq!(data.title.as_deref(), Some("Google Search"));
@@ -81,7 +92,6 @@ fn test_toplevel_latching() {
     assert_eq!(data.pending_app_id, None);
     assert_eq!(data.pending_title, None);
 
-    // Subsequent updates buffer until next commit()
     data.pending_title = Some("YouTube - Video".to_string());
     data.pending_is_active = false;
     assert_eq!(data.title.as_deref(), Some("Google Search"));
@@ -94,10 +104,8 @@ fn test_toplevel_latching() {
 
 #[test]
 fn test_toplevel_compute_active_window() {
-    // Initially empty
     assert_eq!(compute_active_window(&[]), None);
 
-    // Inactive window
     let win1 = ToplevelData {
         app_id: Some("firefox".to_string()),
         title: Some("Google".to_string()),
@@ -106,7 +114,6 @@ fn test_toplevel_compute_active_window() {
     };
     assert_eq!(compute_active_window(std::slice::from_ref(&win1)), None);
 
-    // Active window with empty app_id -> None
     let win_empty_app = ToplevelData {
         app_id: Some("".to_string()),
         title: Some("Terminal".to_string()),
@@ -115,7 +122,6 @@ fn test_toplevel_compute_active_window() {
     };
     assert_eq!(compute_active_window(&[win_empty_app]), None);
 
-    // Active window with whitespace app_id -> None
     let win_ws_app = ToplevelData {
         app_id: Some("   ".to_string()),
         title: Some("Terminal".to_string()),
@@ -124,7 +130,6 @@ fn test_toplevel_compute_active_window() {
     };
     assert_eq!(compute_active_window(&[win_ws_app]), None);
 
-    // Active window with valid app_id and title containing commas
     let win_active = ToplevelData {
         app_id: Some("org.gnome.Terminal".to_string()),
         title: Some("PR #42: fix, build, and test - bash".to_string()),
@@ -138,49 +143,20 @@ fn test_toplevel_compute_active_window() {
     assert_eq!(compute_active_window(&[win1, win_active]), expected);
 }
 
-// ============================================================================
-// Unit Tests: Composite Idle Calculation Logic
-// ============================================================================
-
 #[test]
 fn test_wayland_idle_composite_calculation() {
-    // Case 1: Initial state (no outputs, no seats) -> Active (not idle)
     assert!(!compute_idle_state(vec![], 0, 0));
-
-    // Case 2: Output 1 is ON, input active (0 of 1 idled) -> Active
     assert!(!compute_idle_state(vec![true], 1, 0));
-
-    // Case 3: Output 1 is ON, but seat notification fires Idled (1 of 1 idled) -> Idle
     assert!(compute_idle_state(vec![true], 1, 1));
-
-    // Case 4: Seat notification fires Resumed (0 of 1 idled) -> Active
     assert!(!compute_idle_state(vec![true], 1, 0));
-
-    // Case 5: DPMS monitor power off (Output 1 turns OFF) -> Immediately Idle!
     assert!(compute_idle_state(vec![false], 1, 0));
-
-    // Case 6: Multi-monitor: Output 1 is OFF, Output 2 is ON, input active -> Active
     assert!(!compute_idle_state(vec![false, true], 1, 0));
-
-    // Case 7: Both monitors turn OFF -> Idle
     assert!(compute_idle_state(vec![false, false], 1, 0));
-
-    // Case 8: Monitor turns back ON -> Active
     assert!(!compute_idle_state(vec![true, false], 1, 0));
-
-    // Case 9: Multi-seat: 1 of 2 seats idled -> Active (user active on other seat)
     assert!(!compute_idle_state(vec![true], 2, 1));
-
-    // Case 10: Multi-seat: 2 of 2 seats idled -> Idle
     assert!(compute_idle_state(vec![true], 2, 2));
-
-    // Case 11: Idle inhibitor: Video playing keeps idled count at 0 while output is ON -> Active
     assert!(!compute_idle_state(vec![true], 1, 0));
 }
-
-// ============================================================================
-// Unit Tests: State Machine Lifecycle
-// ============================================================================
 
 #[test]
 fn test_wlr_foreign_toplevel_state_lifecycle() {
@@ -196,13 +172,11 @@ fn test_wlr_foreign_toplevel_state_lifecycle() {
 
     assert_eq!(state.pop_outgoing(), None);
 
-    // Test outgoing queue behavior
     let win = Some(WindowInfo::new("alacritty", "zsh"));
     state.outgoing.push_back(win.clone());
     assert_eq!(state.pop_outgoing(), Some(win));
     assert_eq!(state.pop_outgoing(), None);
 
-    // Test cleanup
     state.cleanup();
     assert!(state.windows.is_empty());
     assert!(state.manager.is_none());
@@ -229,7 +203,6 @@ fn test_wayland_idle_state_lifecycle() {
 
     assert_eq!(state.pop_outgoing(), None);
 
-    // Test outgoing queue behavior
     state.outgoing.push_back(IdleState::Idle);
     assert_eq!(state.pop_outgoing(), Some(IdleState::Idle));
     assert_eq!(state.pop_outgoing(), None);
@@ -238,17 +211,12 @@ fn test_wayland_idle_state_lifecycle() {
     assert_eq!(state.pop_outgoing(), Some(IdleState::Active));
     assert_eq!(state.pop_outgoing(), None);
 
-    // Test cleanup
     state.cleanup();
     assert!(state.notifications.is_empty());
     assert!(state.output_powers.is_empty());
     assert!(state.seats.is_empty());
     assert!(state.outputs.is_empty());
 }
-
-// ============================================================================
-// Builder & Error Resilience Tests
-// ============================================================================
 
 #[test]
 fn test_wlroots_tracker_builder_and_defaults() {
@@ -273,71 +241,61 @@ fn test_wayland_idle_detector_builder_and_defaults() {
 
 #[tokio::test]
 async fn test_wlroots_tracker_missing_display() {
+    let _lock = ENV_LOCK.lock().await;
+    let _env = EnvGuard::set("WAYLAND_DISPLAY", "nonexistent-wayland-test-display-9999");
     let mut tracker = WlrForeignToplevelTracker::new();
     let (tx, _rx) = mpsc::channel(10);
-
-    let original = std::env::var("WAYLAND_DISPLAY").ok();
-    std::env::remove_var("WAYLAND_DISPLAY");
-
     let res = tracker.start(tx).await;
-    assert!(
-        res.is_err(),
-        "Expected error when WAYLAND_DISPLAY is missing"
-    );
-
-    if let Some(val) = original {
-        std::env::set_var("WAYLAND_DISPLAY", val);
-    }
+    assert!(res.is_err());
 }
 
 #[tokio::test]
 async fn test_wayland_idle_missing_display() {
+    let _lock = ENV_LOCK.lock().await;
+    let _env = EnvGuard::set("WAYLAND_DISPLAY", "nonexistent-wayland-test-display-9999");
     let mut detector = WaylandIdleDetector::new();
     let (tx, _rx) = mpsc::channel(10);
-
-    let original = std::env::var("WAYLAND_DISPLAY").ok();
-    std::env::remove_var("WAYLAND_DISPLAY");
-
     let res = detector.start(tx).await;
-    assert!(
-        res.is_err(),
-        "Expected error when WAYLAND_DISPLAY is missing"
-    );
-
-    if let Some(val) = original {
-        std::env::set_var("WAYLAND_DISPLAY", val);
-    }
+    assert!(res.is_err());
 }
 
 #[tokio::test]
 async fn test_wlroots_tracker_query_active_window_disconnected() {
+    let _lock = ENV_LOCK.lock().await;
+    let _env = EnvGuard::set("WAYLAND_DISPLAY", "nonexistent-wayland-test-display-9999");
     let tracker = WlrForeignToplevelTracker::new();
-    let original = std::env::var("WAYLAND_DISPLAY").ok();
-    std::env::remove_var("WAYLAND_DISPLAY");
-
     let res = tracker.query_active_window().await;
     assert!(res.is_err());
-
-    if let Some(val) = original {
-        std::env::set_var("WAYLAND_DISPLAY", val);
-    }
 }
 
-// ============================================================================
-// SessionManager Integration Test with Ephemeral Database
-// ============================================================================
+#[tokio::test]
+async fn test_wlroots_tracker_from_closed_socket_stream() {
+    let (stream, peer) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+    drop(peer);
+    let mut tracker = WlrForeignToplevelTracker::from_socket_stream(stream);
+    let (tx, _rx) = mpsc::channel(10);
+    let res = tracker.start(tx).await;
+    assert!(res.is_err());
+}
+
+#[tokio::test]
+async fn test_wayland_idle_from_closed_socket_stream() {
+    let (stream, peer) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+    drop(peer);
+    let mut detector = WaylandIdleDetector::from_socket_stream(stream);
+    let (tx, _rx) = mpsc::channel(10);
+    let res = detector.start(tx).await;
+    assert!(res.is_err());
+}
 
 #[tokio::test]
 async fn test_session_manager_with_wlroots_data() {
-    // CRITICAL: Strictly using ephemeral temporary directory
     let temp_dir = tempdir().expect("tempdir created");
     let db_path = temp_dir.path().join("test_wlroots_screentime.db");
 
     let db = DbActorHandle::spawn(&db_path).expect("db started");
-
     let mut session_mgr = SessionManager::new(db.clone());
 
-    // Simulate window change events from wlroots foreign toplevel tracker
     let win1_id = session_mgr
         .handle_window_change(Some(WindowInfo::new("kitty", "terminal - fish")), 100.0)
         .await
@@ -348,7 +306,6 @@ async fn test_session_manager_with_wlroots_data() {
     assert_eq!(session1.app_class, "kitty");
     assert_eq!(session1.app_title.as_deref(), Some("terminal - fish"));
 
-    // Simulate title mutation (e.g. command running inside terminal)
     let win2_id = session_mgr
         .handle_window_change(
             Some(WindowInfo::new("kitty", "cargo test - screentime")),
@@ -365,7 +322,6 @@ async fn test_session_manager_with_wlroots_data() {
         Some("cargo test - screentime")
     );
 
-    // Simulate idle transition from Wayland idle detector (screen off or inactivity)
     session_mgr
         .handle_idle_change(IdleState::Idle, 110.0)
         .await
@@ -373,7 +329,6 @@ async fn test_session_manager_with_wlroots_data() {
 
     assert!(session_mgr.is_idle());
 
-    // Simulate user resumption
     session_mgr
         .handle_idle_change(IdleState::Active, 120.0)
         .await
@@ -381,7 +336,6 @@ async fn test_session_manager_with_wlroots_data() {
 
     assert!(!session_mgr.is_idle());
 
-    // Flush and clean up session
     session_mgr
         .handle_window_change(None, 125.0)
         .await
