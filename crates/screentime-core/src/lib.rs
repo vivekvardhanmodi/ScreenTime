@@ -13,4 +13,4 @@ pub use ipc::{
     MAX_MESSAGE_SIZE,
 };
 pub use rules::{TargetRule, TitleRulesCache};
-pub use traits::{IdleDetector, TrackerError, WindowTracker};
+pub use traits::{IdleDetector, NoopIdleDetector, TrackerError, WindowTracker};

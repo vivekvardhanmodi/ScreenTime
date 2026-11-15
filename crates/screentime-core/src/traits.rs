@@ -31,3 +31,51 @@ pub trait IdleDetector: Send + Sync {
     fn is_idle(&self) -> bool;
     async fn stop(&mut self) -> Result<(), TrackerError>;
 }
+
+#[async_trait]
+impl<T: ?Sized + WindowTracker + Send + Sync> WindowTracker for Box<T> {
+    async fn start(&mut self, tx: mpsc::Sender<Option<WindowInfo>>) -> Result<(), TrackerError> {
+        (**self).start(tx).await
+    }
+
+    async fn query_active_window(&self) -> Result<Option<WindowInfo>, TrackerError> {
+        (**self).query_active_window().await
+    }
+
+    async fn stop(&mut self) -> Result<(), TrackerError> {
+        (**self).stop().await
+    }
+}
+
+#[async_trait]
+impl<T: ?Sized + IdleDetector + Send + Sync> IdleDetector for Box<T> {
+    async fn start(&mut self, tx: mpsc::Sender<IdleState>) -> Result<(), TrackerError> {
+        (**self).start(tx).await
+    }
+
+    fn is_idle(&self) -> bool {
+        (**self).is_idle()
+    }
+
+    async fn stop(&mut self) -> Result<(), TrackerError> {
+        (**self).stop().await
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct NoopIdleDetector;
+
+#[async_trait]
+impl IdleDetector for NoopIdleDetector {
+    async fn start(&mut self, _tx: mpsc::Sender<IdleState>) -> Result<(), TrackerError> {
+        Ok(())
+    }
+
+    fn is_idle(&self) -> bool {
+        false
+    }
+
+    async fn stop(&mut self) -> Result<(), TrackerError> {
+        Ok(())
+    }
+}
