@@ -14,6 +14,21 @@ pub fn current_time() -> f64 {
         .as_secs_f64()
 }
 
+/// Helper to determine if an application class corresponds to a known web browser.
+pub fn is_browser_app(app_class: &str) -> bool {
+    let lower = app_class.to_lowercase();
+    lower.contains("chrome")
+        || lower.contains("chromium")
+        || lower.contains("firefox")
+        || lower.contains("brave")
+        || lower.contains("vivaldi")
+        || lower.contains("opera")
+        || lower.contains("edge")
+        || lower.contains("zen")
+        || lower.contains("waterfox")
+        || lower.contains("librewolf")
+}
+
 pub struct SessionManager {
     db: DbActorHandle,
     title_rules: TitleRulesCache,
@@ -27,6 +42,7 @@ pub struct SessionManager {
     current_url: Option<String>,
     is_idle: bool,
     last_heartbeat: f64,
+    last_known_browser_url: Option<String>,
 }
 
 impl SessionManager {
@@ -44,6 +60,7 @@ impl SessionManager {
             current_url: None,
             is_idle: false,
             last_heartbeat: 0.0,
+            last_known_browser_url: None,
         }
     }
 
@@ -157,11 +174,21 @@ impl SessionManager {
         self.current_window = Some(win.clone());
         self.current_effective_class = Some(effective_class.clone());
         self.current_start_time = now;
-        self.current_url = None;
 
-        let session = Session::new(now, now, effective_class)
+        let initial_url = if is_browser_app(&win.app_class) {
+            self.last_known_browser_url.clone()
+        } else {
+            None
+        };
+        self.current_url = initial_url.clone();
+
+        let mut session = Session::new(now, now, effective_class)
             .with_title(win.title)
             .with_device_id(self.device_id.clone());
+
+        if let Some(u) = initial_url {
+            session = session.with_url(u);
+        }
 
         let new_id = self.db.insert_session(session).await?;
         self.current_session_id = Some(new_id);
@@ -189,11 +216,21 @@ impl SessionManager {
 
                     self.current_effective_class = Some(effective_class.clone());
                     self.current_start_time = now;
-                    self.current_url = None;
 
-                    let session = Session::new(now, now, effective_class)
+                    let initial_url = if is_browser_app(&win.app_class) {
+                        self.last_known_browser_url.clone()
+                    } else {
+                        None
+                    };
+                    self.current_url = initial_url.clone();
+
+                    let mut session = Session::new(now, now, effective_class)
                         .with_title(win.title)
                         .with_device_id(self.device_id.clone());
+
+                    if let Some(u) = initial_url {
+                        session = session.with_url(u);
+                    }
 
                     let new_id = self.db.insert_session(session).await?;
                     self.current_session_id = Some(new_id);
@@ -205,14 +242,21 @@ impl SessionManager {
 
     pub async fn handle_url_update(&mut self, update: UrlUpdate, now: f64) -> Result<(), DbError> {
         let Some(session_id) = self.current_session_id else {
+            if let Some(url) = update.url {
+                self.last_known_browser_url = Some(url);
+            }
             return Ok(());
         };
 
         if self.is_idle || self.current_window.is_none() {
+            if let Some(url) = update.url {
+                self.last_known_browser_url = Some(url);
+            }
             return Ok(());
         }
 
         let Some(url) = update.url else {
+            self.last_known_browser_url = None;
             if self.current_url.is_some() {
                 self.db.close_session(session_id, now, 1.0).await?;
 
@@ -234,6 +278,8 @@ impl SessionManager {
             }
             return Ok(());
         };
+
+        self.last_known_browser_url = Some(url.clone());
 
         if self.current_url.as_deref() == Some(&url) {
             return Ok(());

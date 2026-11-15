@@ -16,9 +16,9 @@ pub mod x11;
 pub mod windows;
 
 pub use cli::{
-    default_db_path, parse_cli_args, print_help, print_version, probe_daemon_status,
-    resolve_socket_path, run_daemon, run_install_manifests, run_main, run_status, RunOptions,
-    StatusOptions, Subcommand, VERSION,
+    default_db_path, default_log_dir, parse_cli_args, print_help, print_version,
+    probe_daemon_status, resolve_socket_path, run_daemon, run_install_manifests, run_main,
+    run_status, RunOptions, StatusOptions, Subcommand, VERSION,
 };
 pub use hyprland::{HyprlandIdleDetector, HyprlandWindowTracker};
 pub use ipc::{IpcServer, IpcServerError, IpcServerHandle};
@@ -30,7 +30,7 @@ pub use manifests::{
     NATIVE_HOST_NAME,
 };
 pub use platform::{PlatformBackend, PlatformError};
-pub use session_manager::{current_time, SessionManager};
+pub use session_manager::{current_time, is_browser_app, SessionManager};
 
 #[cfg(target_os = "linux")]
 pub use kde::KdeWindowTracker;
