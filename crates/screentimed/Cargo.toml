@@ -8,3 +8,7 @@ screentime-core = { path = "../screentime-core" }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+async-trait = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
