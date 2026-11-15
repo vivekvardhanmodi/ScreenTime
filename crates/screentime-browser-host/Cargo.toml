@@ -8,3 +8,10 @@ screentime-core = { path = "../screentime-core" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+interprocess = { version = "2.4", features = ["tokio"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[dev-dependencies]
+screentimed = { path = "../screentimed" }
+tempfile = "3"

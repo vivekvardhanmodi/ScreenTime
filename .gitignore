@@ -19,3 +19,4 @@ audit_reports/
 designs/
 test_*.py
 build-firefox-xpi.sh
+.audit/

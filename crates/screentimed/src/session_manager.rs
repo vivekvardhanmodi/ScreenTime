@@ -1,3 +1,4 @@
+use screentime_core::ipc::UrlUpdate;
 use screentime_core::{
     DbActorHandle, DbError, IdleDetector, IdleState, Session, TitleRulesCache, WindowInfo,
     WindowTracker,
@@ -101,6 +102,10 @@ impl SessionManager {
         self.handle_browser_url(url.into(), current_time()).await
     }
 
+    pub async fn on_url_update(&mut self, update: UrlUpdate) -> Result<(), DbError> {
+        self.handle_url_update(update, current_time()).await
+    }
+
     pub async fn heartbeat(&mut self) -> Result<(), DbError> {
         self.handle_heartbeat(current_time()).await
     }
@@ -198,7 +203,7 @@ impl SessionManager {
         Ok(())
     }
 
-    pub async fn handle_browser_url(&mut self, url: String, now: f64) -> Result<(), DbError> {
+    pub async fn handle_url_update(&mut self, update: UrlUpdate, now: f64) -> Result<(), DbError> {
         let Some(session_id) = self.current_session_id else {
             return Ok(());
         };
@@ -206,6 +211,29 @@ impl SessionManager {
         if self.is_idle || self.current_window.is_none() {
             return Ok(());
         }
+
+        let Some(url) = update.url else {
+            if self.current_url.is_some() {
+                self.db.close_session(session_id, now, 1.0).await?;
+
+                let win = self.current_window.as_ref().unwrap();
+                let effective_class = self
+                    .current_effective_class
+                    .clone()
+                    .unwrap_or_else(|| win.app_class.clone());
+
+                self.current_start_time = now;
+                self.current_url = None;
+
+                let session = Session::new(now, now, effective_class)
+                    .with_title(win.title.clone())
+                    .with_device_id(self.device_id.clone());
+
+                let new_id = self.db.insert_session(session).await?;
+                self.current_session_id = Some(new_id);
+            }
+            return Ok(());
+        };
 
         if self.current_url.as_deref() == Some(&url) {
             return Ok(());
@@ -227,11 +255,13 @@ impl SessionManager {
                 .clone()
                 .unwrap_or_else(|| win.app_class.clone());
 
+            let title = update.title.unwrap_or_else(|| win.title.clone());
+
             self.current_start_time = now;
             self.current_url = Some(url.clone());
 
             let session = Session::new(now, now, effective_class)
-                .with_title(win.title.clone())
+                .with_title(title)
                 .with_url(url)
                 .with_device_id(self.device_id.clone());
 
@@ -240,6 +270,18 @@ impl SessionManager {
         }
 
         Ok(())
+    }
+
+    pub async fn handle_browser_url(&mut self, url: String, now: f64) -> Result<(), DbError> {
+        self.handle_url_update(
+            UrlUpdate {
+                url: Some(url),
+                title: None,
+                browser_type: "browser".to_string(),
+            },
+            now,
+        )
+        .await
     }
 
     pub async fn handle_heartbeat(&mut self, now: f64) -> Result<(), DbError> {
@@ -286,16 +328,17 @@ impl SessionManager {
         Ok(())
     }
 
-    pub async fn run_loop<W, I>(
+    pub async fn run_loop<W, I, U>(
         mut self,
         mut tracker: W,
         mut idle: I,
-        mut url_rx: mpsc::Receiver<String>,
+        mut url_rx: mpsc::Receiver<U>,
         mut shutdown_rx: mpsc::Receiver<()>,
     ) -> Result<(), DbError>
     where
         W: WindowTracker,
         I: IdleDetector,
+        U: Into<UrlUpdate> + Send + 'static,
     {
         let (win_tx, mut win_rx) = mpsc::channel(64);
         tracker
@@ -326,8 +369,9 @@ impl SessionManager {
                     self.on_idle_change(idle_state).await?;
                 }
                 Some(url) = url_rx.recv() => {
-                    debug!("Browser URL received: {}", url);
-                    self.on_browser_url(url).await?;
+                    let update = url.into();
+                    debug!("Browser URL received: {:?}", update);
+                    self.on_url_update(update).await?;
                 }
                 _ = heartbeat_ticker.tick() => {
                     self.heartbeat().await?;
