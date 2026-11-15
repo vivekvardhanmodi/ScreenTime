@@ -142,7 +142,6 @@ pub fn spawn_win32_listener(event_tx: UnboundedSender<PlatformEvent>) -> Win32Li
                 *guard = Some(event_tx);
             }
 
-            // 1. Register Hidden Message Window Class
             let h_instance = GetModuleHandleW(std::ptr::null());
             let class_name = windows_sys::w!("ScreentimeMsgClass");
 
@@ -162,7 +161,6 @@ pub fn spawn_win32_listener(event_tx: UnboundedSender<PlatformEvent>) -> Win32Li
             };
             RegisterClassExW(&wnd_class);
 
-            // 2. Create Message-Only Window
             let hwnd = CreateWindowExW(
                 0,
                 class_name,
@@ -178,7 +176,6 @@ pub fn spawn_win32_listener(event_tx: UnboundedSender<PlatformEvent>) -> Win32Li
                 std::ptr::null(),
             );
 
-            // 3. Register Session and Power Notifications
             let power_notify: HPOWERNOTIFY = RegisterPowerSettingNotification(
                 hwnd as _,
                 &GUID_CONSOLE_DISPLAY_STATE as *const _ as _,
@@ -186,7 +183,6 @@ pub fn spawn_win32_listener(event_tx: UnboundedSender<PlatformEvent>) -> Win32Li
             );
             WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION);
 
-            // 4. Install Foreground WinEvent Hook
             let hook = SetWinEventHook(
                 EVENT_SYSTEM_FOREGROUND,
                 EVENT_SYSTEM_FOREGROUND,
@@ -197,14 +193,12 @@ pub fn spawn_win32_listener(event_tx: UnboundedSender<PlatformEvent>) -> Win32Li
                 WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
             );
 
-            // 5. Message Pump Loop
             let mut msg: MSG = std::mem::zeroed();
             while GetMessageW(&mut msg, 0, 0, 0) > 0 {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
 
-            // 6. Cleanup
             if hook != 0 {
                 UnhookWinEvent(hook);
             }

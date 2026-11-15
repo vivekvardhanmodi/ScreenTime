@@ -22,10 +22,6 @@ use windows::uwp::{
 };
 use windows::{WindowsIdleDetector, WindowsTracker};
 
-// ============================================================================
-// 1. Tick Math & 49.7-Day Rollover Unit Tests
-// ============================================================================
-
 #[test]
 fn test_windows_idle_tick_rollover_math() {
     // Normal case (no rollover): current > last
@@ -138,10 +134,6 @@ fn test_windows_idle_state_transitions() {
     );
 }
 
-// ============================================================================
-// 2. UWP Unwrapping & Executable Image Name Extraction Unit Tests
-// ============================================================================
-
 #[test]
 fn test_windows_process_path_extraction() {
     // Windows paths with backslashes
@@ -214,10 +206,6 @@ fn test_windows_uwp_child_window_resolution() {
     assert_eq!(find_uwp_child_process(host_pid, &no_match), None);
 }
 
-// ============================================================================
-// 3. Window Title & OS Event Parsing Unit Tests
-// ============================================================================
-
 #[test]
 fn test_windows_window_title_sanitization() {
     assert_eq!(
@@ -263,10 +251,6 @@ fn test_windows_display_power_and_session_events() {
     );
     assert_eq!(parse_session_change_event(999), None);
 }
-
-// ============================================================================
-// 4. Mock WindowsTracker & WindowsIdleDetector Unit Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_windows_tracker_event_streaming() {
@@ -406,13 +390,8 @@ fn test_windows_idle_detector_query_idle_time_and_builders() {
     assert!(!idle.is_idle());
 }
 
-// ============================================================================
-// 5. Integration with SessionManager and Ephemeral Database
-// ============================================================================
-
 #[tokio::test]
 async fn test_windows_tracker_and_idle_with_session_manager() {
-    // Strictly isolate tests to an ephemeral temporary directory
     let temp_dir = tempdir().expect("created temp dir");
     let db_path = temp_dir.path().join("screentime_test.db");
 
@@ -435,7 +414,6 @@ async fn test_windows_tracker_and_idle_with_session_manager() {
             .await
     });
 
-    // 1. Focus on Chrome
     tracker_tx
         .send(PlatformEvent::WindowChanged(Some(WindowInfo::new(
             "chrome.exe",
@@ -445,7 +423,6 @@ async fn test_windows_tracker_and_idle_with_session_manager() {
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // 2. Browser URL arrives for Chrome
     url_tx
         .send(screentime_core::ipc::UrlUpdate {
             url: Some("https://github.com/rust-lang/rust".to_string()),
@@ -455,10 +432,8 @@ async fn test_windows_tracker_and_idle_with_session_manager() {
         .await
         .unwrap();
 
-    // Allow session to exceed 1.0s noise filter threshold
     tokio::time::sleep(Duration::from_millis(1100)).await;
 
-    // 3. User switches to Calculator (UWP unwrap simulated)
     tracker_tx
         .send(PlatformEvent::WindowChanged(Some(WindowInfo::new(
             "CalculatorApp.exe",
@@ -466,30 +441,24 @@ async fn test_windows_tracker_and_idle_with_session_manager() {
         ))))
         .unwrap();
 
-    // Allow Calculator session to exceed 1.0s noise filter threshold
     tokio::time::sleep(Duration::from_millis(1100)).await;
 
-    // 4. Display powers off (monitor sleep / DPMS)
     idle_tx.send(PlatformEvent::DisplayOff).unwrap();
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // 5. Workstation locks while monitor is off
     idle_tx.send(PlatformEvent::SessionLocked).unwrap();
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // 6. User unlocks session
     idle_tx.send(PlatformEvent::SessionUnlocked).unwrap();
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // 7. Display turns back on
     idle_tx.send(PlatformEvent::DisplayOn).unwrap();
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // 8. Clean shutdown
     shutdown_tx.send(()).await.unwrap();
     run_handle.await.unwrap().expect("run_loop exited cleanly");
 
