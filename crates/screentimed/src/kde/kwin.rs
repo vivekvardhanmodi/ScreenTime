@@ -33,10 +33,8 @@ pub async fn load_and_run_kwin_script(
         .await
         .map_err(|e| TrackerError::Tracker(format!("Failed to connect to KWin scripting: {e}")))?;
 
-    // 1. Unload any existing script first
     let _ = scripting_proxy.unload_script(plugin_name).await;
 
-    // 2. Load script
     let path_str = script_path
         .to_str()
         .ok_or_else(|| TrackerError::Tracker("Invalid script path utf-8".to_string()))?;
@@ -54,7 +52,6 @@ pub async fn load_and_run_kwin_script(
 
     debug!("Loaded KWin script '{plugin_name}' with id {script_id}");
 
-    // 3. Try Plasma 6 script path: /Scripting/Script<id>
     let plasma6_path = format!("/Scripting/Script{script_id}");
     if let Ok(builder) = KWinScriptProxy::builder(connection)
         .destination(kwin_service)
@@ -68,7 +65,6 @@ pub async fn load_and_run_kwin_script(
         }
     }
 
-    // 4. Try Plasma 5 script path: /<id>
     let plasma5_path = format!("/{script_id}");
     if let Ok(builder) = KWinScriptProxy::builder(connection)
         .destination(kwin_service)
@@ -82,7 +78,6 @@ pub async fn load_and_run_kwin_script(
         }
     }
 
-    // 5. Fallback: call start() on /Scripting
     warn!("Falling back to scripting.start()");
     scripting_proxy
         .start()

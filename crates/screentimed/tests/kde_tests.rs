@@ -229,7 +229,6 @@ async fn test_mock_kwin_scripting_load_run_unload_and_window_changed() {
     let bus = TestDbus::spawn();
     let temp_runtime = tempdir().unwrap();
 
-    // 1. Setup mock KWin service on private D-Bus bus
     let kwin_conn = Builder::address(bus.address())
         .unwrap()
         .build()
@@ -254,7 +253,6 @@ async fn test_mock_kwin_scripting_load_run_unload_and_window_changed() {
         .unwrap();
     kwin_conn.request_name("org.kde.KWin").await.unwrap();
 
-    // 2. Start KdeWindowTracker
     let mut tracker = KdeWindowTracker::new()
         .with_bus_address(bus.address())
         .with_runtime_dir(temp_runtime.path())
@@ -263,7 +261,6 @@ async fn test_mock_kwin_scripting_load_run_unload_and_window_changed() {
     let (tx, mut rx) = mpsc::channel(16);
     tracker.start(tx).await.unwrap();
 
-    // Verify mock KWin received loadScript
     tokio::time::sleep(Duration::from_millis(50)).await;
     {
         let loaded = loaded_scripts.lock().await;
@@ -272,13 +269,11 @@ async fn test_mock_kwin_scripting_load_run_unload_and_window_changed() {
         assert!(Path::new(&loaded[0].0).exists());
     }
 
-    // Verify mock script .run() was called
     {
         let runs = *script_runs.lock().await;
         assert_eq!(runs, 1, "Script .run() must have been called");
     }
 
-    // 3. Simulate KWin script calling WindowChanged
     let daemon_proxy = zbus::Proxy::new(
         &kwin_conn,
         "org.screentime.Daemon",
@@ -314,7 +309,6 @@ async fn test_mock_kwin_scripting_load_run_unload_and_window_changed() {
         ))
     );
 
-    // Simulate desktop unfocused (empty strings)
     let _: () = daemon_proxy.call("WindowChanged", &("", "")).await.unwrap();
 
     let ev2 = rx.recv().await.unwrap();
@@ -323,7 +317,6 @@ async fn test_mock_kwin_scripting_load_run_unload_and_window_changed() {
     let active_none = tracker.query_active_window().await.unwrap();
     assert_eq!(active_none, None);
 
-    // Another focused app
     let _: () = daemon_proxy
         .call("WindowChanged", &("kitty", "terminal"))
         .await
@@ -332,7 +325,6 @@ async fn test_mock_kwin_scripting_load_run_unload_and_window_changed() {
     let ev3 = rx.recv().await.unwrap();
     assert_eq!(ev3, Some(WindowInfo::new("kitty", "terminal")));
 
-    // 4. Stop tracker and verify unloadScript
     tracker.stop().await.unwrap();
     {
         let unloaded = unloaded_scripts.lock().await;
@@ -348,7 +340,6 @@ async fn test_kwin_restart_resilience_name_owner_changed() {
     let bus = TestDbus::spawn();
     let temp_runtime = tempdir().unwrap();
 
-    // 1. Initial KWin mock
     let kwin_conn1 = Builder::address(bus.address())
         .unwrap()
         .build()
@@ -373,7 +364,6 @@ async fn test_kwin_restart_resilience_name_owner_changed() {
         .unwrap();
     kwin_conn1.request_name("org.kde.KWin").await.unwrap();
 
-    // 2. Start tracker
     let mut tracker = KdeWindowTracker::new()
         .with_bus_address(bus.address())
         .with_runtime_dir(temp_runtime.path())
@@ -385,7 +375,6 @@ async fn test_kwin_restart_resilience_name_owner_changed() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(loaded_scripts.lock().await.len(), 1);
 
-    // 3. Simulate KWin restart: release name on conn1, claim name on conn2
     kwin_conn1.release_name("org.kde.KWin").await.unwrap();
 
     let kwin_conn2 = Builder::address(bus.address())
@@ -407,10 +396,8 @@ async fn test_kwin_restart_resilience_name_owner_changed() {
         .await
         .unwrap();
 
-    // Claim org.kde.KWin on new connection to emit NameOwnerChanged
     kwin_conn2.request_name("org.kde.KWin").await.unwrap();
 
-    // Wait for the tracker's 500ms debounce and re-injection
     tokio::time::sleep(Duration::from_millis(800)).await;
 
     {
@@ -427,7 +414,6 @@ async fn test_kwin_restart_resilience_name_owner_changed() {
 
 #[tokio::test]
 async fn test_kde_tracker_with_session_manager_integration() {
-    // CRITICAL: Strictly use tempfile::tempdir() for database
     let temp_db_dir = tempdir().unwrap();
     let db_path = temp_db_dir.path().join("test_kde_screentime.db");
     let db_handle = DbActorHandle::spawn(&db_path).unwrap();
@@ -479,7 +465,6 @@ async fn test_kde_tracker_with_session_manager_integration() {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Send window events via D-Bus
     let daemon_proxy = zbus::Proxy::new(
         &kwin_conn,
         "org.screentime.Daemon",
