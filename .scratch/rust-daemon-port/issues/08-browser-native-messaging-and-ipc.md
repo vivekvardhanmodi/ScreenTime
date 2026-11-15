@@ -4,12 +4,12 @@
 
 **Blocked by:** 02 (Core Domain Traits and SessionManager State Machine)
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] `screentimed` starts a local socket IPC server (`$XDG_RUNTIME_DIR/screentime/screentimed.sock` on Linux, `\\.\pipe\screentimed-ipc` on Windows) using `interprocess::local_socket`
-- [ ] Binding the local socket acts as single-instance enforcement (supplemented with Win32 Global Named Mutex on Windows)
-- [ ] Standalone `screentime-browser-host` binary reads 4-byte native-endian length-prefixed JSON from stdin
-- [ ] Browser host connects to daemon local socket and pushes `UrlUpdate { url, title, browser_type }` in $<1$ms
-- [ ] Browser host handles browser disconnections cleanly without zombie processes
-- [ ] `SessionManager` receives IPC URL updates and reconciles active sessions in-place ($<2.0$s) or splits sessions on navigation
-- [ ] Zero changes required to `chrome_extension/` or `firefox_extension/` manifests and code
+- [x] `screentimed` starts a local socket IPC server (`$XDG_RUNTIME_DIR/screentime/screentimed.sock` on Linux, `\\.\pipe\screentimed-ipc` on Windows) using `interprocess::local_socket`
+- [x] Binding the local socket acts as single-instance enforcement (supplemented with Win32 Global Named Mutex on Windows)
+- [x] Standalone `screentime-browser-host` binary reads 4-byte native-endian length-prefixed JSON from stdin
+- [x] Browser host connects to daemon local socket and pushes `UrlUpdate { url, title, browser_type }` in $<1$ms
+- [x] Browser host handles browser disconnections cleanly without zombie processes
+- [x] `SessionManager` receives IPC URL updates and reconciles active sessions in-place ($<2.0$s) or splits sessions on navigation
+- [x] Zero changes required to `chrome_extension/` or `firefox_extension/` manifests and code
