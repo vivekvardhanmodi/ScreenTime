@@ -4,13 +4,13 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Cargo workspace configured with crates `screentime-core`, `screentimed`, and `screentime-browser-host`
-- [ ] `screentime-core` defines shared domain types: `Session`, `WindowInfo`, `IdleState`, `TitleRule`
-- [ ] `DbActor` runs on a dedicated OS thread using `rusqlite` with `features = ["bundled"]`
-- [ ] Connection initializes with `PRAGMA journal_mode = WAL;`, `PRAGMA synchronous = NORMAL;`, `PRAGMA busy_timeout = 10000;`, and `PRAGMA foreign_keys = ON;`
-- [ ] Automated migration baselines existing Python databases where `user_version = 0`, preserving all legacy history and upgrading schema to version 1
-- [ ] `DbActorHandle` provides Tokio channels for `insert_session`, `update_end_time`, `filter_noise_sessions`, and `reload_title_rules`
-- [ ] In-memory `TitleRulesCache` evaluates case-insensitive prefix matching against window titles with a periodic reload
-- [ ] Integration tests verify concurrent read/write access, WAL persistence, migration baselining against a dummy legacy DB, and noise deletion
+- [x] Cargo workspace configured with crates `screentime-core`, `screentimed`, and `screentime-browser-host`
+- [x] `screentime-core` defines shared domain types: `Session`, `WindowInfo`, `IdleState`, `TitleRule`
+- [x] `DbActor` runs on a dedicated OS thread using `rusqlite` with `features = ["bundled"]`
+- [x] Connection initializes with `PRAGMA journal_mode = WAL;`, `PRAGMA synchronous = NORMAL;`, `PRAGMA busy_timeout = 10000;`, and `PRAGMA foreign_keys = ON;`
+- [x] Automated migration baselines existing Python databases where `user_version = 0`, preserving all legacy history and upgrading schema to version 1
+- [x] `DbActorHandle` provides Tokio channels for `insert_session`, `update_end_time`, `filter_noise_sessions`, and `reload_title_rules`
+- [x] In-memory `TitleRulesCache` evaluates case-insensitive prefix matching against window titles with a periodic reload
+- [x] Integration tests verify concurrent read/write access, WAL persistence, migration baselining against a dummy legacy DB, and noise deletion
