@@ -137,7 +137,6 @@ fn test_cli_install_manifests_command() {
     let mock_host = temp.path().join("screentime-browser-host");
     fs::write(&mock_host, b"#!/bin/sh\nexit 0\n").unwrap();
 
-    // 1. Initial install with explicit extension ID
     let output = Command::new(CLI_BIN)
         .args([
             "install-manifests",
@@ -181,7 +180,6 @@ fn test_cli_install_manifests_command() {
         vec![DEFAULT_FIREFOX_EXTENSION_ID]
     );
 
-    // 2. Second install WITHOUT extension-id: must preserve the previously set ID
     let output2 = Command::new(CLI_BIN)
         .args([
             "install-manifests",
@@ -207,12 +205,10 @@ fn test_cli_install_manifests_command() {
 
 #[test]
 fn test_platform_auto_detect_all_environments() {
-    // 1. Windows OS
     let mut env = HashMap::new();
     let res = PlatformBackend::auto_detect_from(&env, "windows").unwrap();
     assert_eq!(res, PlatformBackend::Windows);
 
-    // 2. Hyprland
     env.insert(
         "HYPRLAND_INSTANCE_SIGNATURE".to_string(),
         "instance_sig_123".to_string(),
@@ -220,31 +216,26 @@ fn test_platform_auto_detect_all_environments() {
     let res = PlatformBackend::auto_detect_from(&env, "linux").unwrap();
     assert_eq!(res, PlatformBackend::Hyprland);
 
-    // 3. KDE Plasma via XDG_CURRENT_DESKTOP
     env.clear();
     env.insert("XDG_CURRENT_DESKTOP".to_string(), "KDE".to_string());
     let res = PlatformBackend::auto_detect_from(&env, "linux").unwrap();
     assert_eq!(res, PlatformBackend::Kde);
 
-    // 4. KDE Plasma via XDG_SESSION_DESKTOP
     env.clear();
     env.insert("XDG_SESSION_DESKTOP".to_string(), "plasma:KDE".to_string());
     let res = PlatformBackend::auto_detect_from(&env, "linux").unwrap();
     assert_eq!(res, PlatformBackend::Kde);
 
-    // 5. Generic Wayland / wlroots
     env.clear();
     env.insert("WAYLAND_DISPLAY".to_string(), "wayland-1".to_string());
     let res = PlatformBackend::auto_detect_from(&env, "linux").unwrap();
     assert_eq!(res, PlatformBackend::Wlroots);
 
-    // 6. X11
     env.clear();
     env.insert("DISPLAY".to_string(), ":0".to_string());
     let res = PlatformBackend::auto_detect_from(&env, "linux").unwrap();
     assert_eq!(res, PlatformBackend::X11);
 
-    // 7. No desktop detected
     env.clear();
     let res = PlatformBackend::auto_detect_from(&env, "linux");
     assert!(matches!(res, Err(PlatformError::NoSupportedDesktop)));

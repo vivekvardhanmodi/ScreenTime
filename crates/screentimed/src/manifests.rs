@@ -117,7 +117,6 @@ pub fn resolve_browser_host_binary(explicit: Option<&Path>) -> PathBuf {
         "screentime-browser-host"
     };
 
-    // 1. Check same directory as current executable
     if let Ok(current_exe) = std::env::current_exe() {
         if let Some(parent) = current_exe.parent() {
             let candidate = parent.join(binary_name);
@@ -127,7 +126,6 @@ pub fn resolve_browser_host_binary(explicit: Option<&Path>) -> PathBuf {
         }
     }
 
-    // 2. Check current working directory / target
     for sub in &["target/release", "target/debug"] {
         let candidate = PathBuf::from(sub).join(binary_name);
         if candidate.exists() {
@@ -138,7 +136,6 @@ pub fn resolve_browser_host_binary(explicit: Option<&Path>) -> PathBuf {
         }
     }
 
-    // 3. Fallback standard location
     if cfg!(windows) {
         PathBuf::from(r"C:\Program Files\screentime").join(binary_name)
     } else {

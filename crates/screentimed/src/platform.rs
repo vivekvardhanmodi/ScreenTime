@@ -78,7 +78,6 @@ impl PlatformBackend {
             return Ok(Self::Windows);
         }
 
-        // 1. Hyprland compositor
         if let Some(sig) = env.get("HYPRLAND_INSTANCE_SIGNATURE") {
             if !sig.trim().is_empty() {
                 debug!("Detected Hyprland desktop via HYPRLAND_INSTANCE_SIGNATURE");
@@ -86,7 +85,6 @@ impl PlatformBackend {
             }
         }
 
-        // 2. KDE Plasma
         let xdg_current = env
             .get("XDG_CURRENT_DESKTOP")
             .map(|s| s.to_ascii_uppercase())
@@ -102,7 +100,6 @@ impl PlatformBackend {
             return Ok(Self::Kde);
         }
 
-        // 3. Generic Wayland / wlroots compositor (Sway, River, Wayfire, etc.)
         if let Some(wayland_display) = env.get("WAYLAND_DISPLAY") {
             if !wayland_display.trim().is_empty() {
                 debug!("Detected Wayland session via WAYLAND_DISPLAY={wayland_display}");
@@ -110,7 +107,6 @@ impl PlatformBackend {
             }
         }
 
-        // 4. Traditional X11 session
         if let Some(x11_display) = env.get("DISPLAY") {
             if !x11_display.trim().is_empty() {
                 debug!("Detected X11 session via DISPLAY={x11_display}");
