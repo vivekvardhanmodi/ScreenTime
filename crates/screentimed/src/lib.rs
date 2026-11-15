@@ -15,3 +15,13 @@ pub mod windows;
 pub use hyprland::{HyprlandIdleDetector, HyprlandWindowTracker};
 pub use ipc::{IpcServer, IpcServerError, IpcServerHandle};
 pub use session_manager::{current_time, SessionManager};
+
+#[cfg(target_os = "linux")]
+pub use kde::KdeWindowTracker;
+#[cfg(target_os = "linux")]
+pub use wlroots::{WaylandIdleDetector, WlrForeignToplevelTracker};
+#[cfg(target_os = "linux")]
+pub use x11::{X11IdleDetector, X11WindowTracker};
+
+#[cfg(target_os = "windows")]
+pub use windows::{WindowsIdleDetector, WindowsTracker};
