@@ -227,7 +227,6 @@ async fn test_x11_with_session_manager_integration() {
         return;
     };
 
-    // CRITICAL SAFETY RULE: Always use ephemeral tempdir for database
     let temp_dir = tempdir().expect("tempdir");
     let db_path = temp_dir.path().join("test_screentime.db");
 
@@ -242,10 +241,8 @@ async fn test_x11_with_session_manager_integration() {
 
     let runner = tokio::spawn(async move { sm.run_loop(tracker, idle, url_rx, shutdown_rx).await });
 
-    // Let the event loop run briefly
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Signal shutdown
     let _ = shutdown_tx.send(()).await;
     let res = runner.await.expect("runner task completed");
     assert!(res.is_ok(), "SessionManager run_loop exited successfully");

@@ -232,7 +232,6 @@ fn run_idle_loop(
     stop_rx: watch::Receiver<bool>,
     init_tx: oneshot::Sender<Result<(), TrackerError>>,
 ) {
-    // 1. Establish pure-Rust connection to X11
     let (conn, screen_num) = match RustConnection::connect(display.as_deref()) {
         Ok(res) => res,
         Err(e) => {
@@ -246,7 +245,6 @@ fn run_idle_loop(
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
 
-    // 2. Check XScreenSaver extension availability
     let has_screensaver = match screensaver::query_version(&conn, 1, 1) {
         Ok(cookie) => match cookie.reply() {
             Ok(v) => {
@@ -267,7 +265,6 @@ fn run_idle_loop(
         }
     };
 
-    // 3. Query initial idle state
     let mut current_state = if has_screensaver {
         match screensaver::query_info(&conn, root) {
             Ok(cookie) => match cookie.reply() {
@@ -295,15 +292,12 @@ fn run_idle_loop(
         return;
     }
 
-    // Notify caller that initialization succeeded
     let _ = init_tx.send(Ok(()));
     info!("X11 idle detector loop initialized successfully");
 
-    // 4. Polling loop
     let mut last_poll = Instant::now();
 
     while !*stop_rx.borrow() {
-        // Sleep in short increments to allow prompt shutdown response
         thread::sleep(Duration::from_millis(50));
 
         if *stop_rx.borrow() {

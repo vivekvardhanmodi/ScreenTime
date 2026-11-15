@@ -149,7 +149,6 @@ fn run_tracker_loop(
     stop_rx: watch::Receiver<bool>,
     init_tx: oneshot::Sender<Result<(), TrackerError>>,
 ) {
-    // 1. Establish pure-Rust connection to X11
     let (conn, screen_num) = match RustConnection::connect(display.as_deref()) {
         Ok(res) => res,
         Err(e) => {
@@ -163,7 +162,6 @@ fn run_tracker_loop(
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
 
-    // 2. Batch intern required atoms
     let atoms = match Atoms::new(&conn) {
         Ok(cookie) => match cookie.reply() {
             Ok(atoms) => atoms,
@@ -182,7 +180,6 @@ fn run_tracker_loop(
         }
     };
 
-    // 3. Subscribe to PropertyNotify events on root window
     let root_mask = ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE);
     if let Err(e) = conn.change_window_attributes(root, &root_mask) {
         let _ = init_tx.send(Err(TrackerError::Tracker(format!(
@@ -197,7 +194,6 @@ fn run_tracker_loop(
         return;
     }
 
-    // 4. Bootstrap initial active window
     let mut active_window_id = query_root_active_window(&conn, root, &atoms);
     let mut active_window_info = active_window_id.and_then(|w| {
         watch_window(&conn, w);
@@ -213,11 +209,9 @@ fn run_tracker_loop(
         return;
     }
 
-    // Notify caller that initialization succeeded
     let _ = init_tx.send(Ok(()));
     info!("X11 window tracker loop initialized successfully");
 
-    // 5. Main event loop
     while !*stop_rx.borrow() {
         let mut had_events = false;
 
@@ -260,7 +254,6 @@ fn handle_property_notify(
     current_window: &Arc<Mutex<Option<WindowInfo>>>,
     tx: &mpsc::Sender<Option<WindowInfo>>,
 ) {
-    // Case 1: _NET_ACTIVE_WINDOW changed on root window
     if ev.window == root && ev.atom == atoms._NET_ACTIVE_WINDOW {
         let new_active_id = query_root_active_window(conn, root, atoms);
         if new_active_id != *active_window_id {
@@ -278,9 +271,7 @@ fn handle_property_notify(
                 let _ = tx.blocking_send(new_info);
             }
         }
-    }
-    // Case 2: Title or class changed on currently active window
-    else if let Some(active_id) = *active_window_id {
+    } else if let Some(active_id) = *active_window_id {
         if ev.window == active_id
             && (ev.atom == atoms._NET_WM_NAME
                 || ev.atom == u32::from(AtomEnum::WM_NAME)

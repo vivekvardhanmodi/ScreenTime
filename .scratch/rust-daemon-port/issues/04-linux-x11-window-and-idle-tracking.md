@@ -4,13 +4,13 @@
 
 **Blocked by:** 02 (Core Domain Traits and SessionManager State Machine)
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Connects to the X11 server via `x11rb::rust_connection::RustConnection` over Unix domain socket
-- [ ] Interns required atoms (`_NET_ACTIVE_WINDOW`, `_NET_WM_NAME`, `UTF8_STRING`, `WM_CLASS`)
-- [ ] Subscribes to `EventMask::PROPERTY_CHANGE` on the root window to capture active window switches
-- [ ] Listens to `PropertyChangeMask` on the active window to detect tab and buffer title updates
-- [ ] Resolves application class from `WM_CLASS` and window title from `_NET_WM_NAME` (with `WM_NAME` fallback)
-- [ ] Gracefully catches X11 errors (`BadWindow`) when windows close mid-query
-- [ ] Queries `x11rb::protocol::screensaver::query_info` to read hardware idle time in milliseconds across all input devices
-- [ ] Runs the X11 connection on a dedicated OS worker thread streaming `Option<WindowInfo>` and `IdleState` to Tokio MPSC channels
+- [x] Connects to the X11 server via `x11rb::rust_connection::RustConnection` over Unix domain socket
+- [x] Interns required atoms (`_NET_ACTIVE_WINDOW`, `_NET_WM_NAME`, `UTF8_STRING`, `WM_CLASS`)
+- [x] Subscribes to `EventMask::PROPERTY_CHANGE` on the root window to capture active window switches
+- [x] Listens to `PropertyChangeMask` on the active window to detect tab and buffer title updates
+- [x] Resolves application class from `WM_CLASS` and window title from `_NET_WM_NAME` (with `WM_NAME` fallback)
+- [x] Gracefully catches X11 errors (`BadWindow`) when windows close mid-query
+- [x] Queries `x11rb::protocol::screensaver::query_info` to read hardware idle time in milliseconds across all input devices
+- [x] Runs the X11 connection on a dedicated OS worker thread streaming `Option<WindowInfo>` and `IdleState` to Tokio MPSC channels

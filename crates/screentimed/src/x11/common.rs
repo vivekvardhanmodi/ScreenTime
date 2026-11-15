@@ -133,12 +133,10 @@ pub fn fetch_text_property(
 
 /// Fetch window title from `_NET_WM_NAME` (UTF-8), falling back to `WM_NAME` (STRING).
 pub fn fetch_window_title(conn: &RustConnection, window: Window, atoms: &Atoms) -> Option<String> {
-    // 1. Try EWMH _NET_WM_NAME (UTF-8)
     if let Some(title) = fetch_text_property(conn, window, atoms._NET_WM_NAME, atoms.UTF8_STRING) {
         return Some(title);
     }
 
-    // 2. Fallback to ICCCM WM_NAME
     if let Some(title) = fetch_text_property(
         conn,
         window,
