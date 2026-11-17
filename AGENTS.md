@@ -11,4 +11,3 @@
 
 - **Personal Database Safety**: Never touch, read, write, or alter the host database at `~/.local/share/screentime/screentime.db`. All tests and automated verification must strictly use ephemeral temporary databases (`tempfile::tempdir()`).
 - **Resource Limits**: Restrict Cargo concurrency (e.g., pass `-j 2` or keep `CARGO_BUILD_JOBS=2`) to prevent CPU starvation on the host machine.
-- **Quality Gates**: Ensure `cargo test --workspace -j 2`, `cargo clippy --workspace --all-targets --all-features -j 2 -- -D warnings`, and `cargo fmt --check` pass cleanly.
