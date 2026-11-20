@@ -11,10 +11,10 @@ Deploy a complete CI pipeline in `.github/workflows/ci.yml`:
 
 **Blocked by:** 01, 02, 03, 04, 05
 
-**Status:** open
+**Status:** complete
 
-- [ ] Create headless Wayland E2E test script and CI job
-- [ ] Create headless X11 E2E test script and CI job
-- [ ] Create Windows desktop CI test job
-- [ ] Create multi-distro Docker smoke test workflow
-- [ ] Verify workflow passes cleanly on GitHub Actions
+- [x] Create headless Wayland E2E test script and CI job
+- [x] Create headless X11 E2E test script and CI job
+- [x] Create Windows desktop CI test job
+- [x] Create multi-distro Docker smoke test workflow
+- [x] Verify workflow passes cleanly on GitHub Actions

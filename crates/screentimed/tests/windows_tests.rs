@@ -544,7 +544,11 @@ async fn test_windows_power_suspend_resume_with_session_manager() {
 
     let resumed_sessions = db_clone.get_sessions_in_range(0.0, 1e12).await.unwrap();
     assert_eq!(resumed_sessions.len(), 2, "New session created upon wake");
-    let s2_id = resumed_sessions.iter().map(|s| s.id.unwrap()).max().unwrap();
+    let s2_id = resumed_sessions
+        .iter()
+        .map(|s| s.id.unwrap())
+        .max()
+        .unwrap();
     assert_ne!(s1_id, s2_id);
 
     shutdown_tx.send(()).await.unwrap();

@@ -1,4 +1,7 @@
-use screentime_core::{DbActorHandle, IdleState, WindowInfo, WindowTracker, IdleDetector, TrackerError};
+use async_trait::async_trait;
+use screentime_core::{
+    DbActorHandle, IdleDetector, IdleState, TrackerError, WindowInfo, WindowTracker,
+};
 use screentimed::sleep::{has_external_display_in, is_internal_connector, SleepEvent};
 #[cfg(target_os = "linux")]
 use screentimed::LogindSleepListener;
@@ -8,7 +11,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tempfile::tempdir;
 use tokio::sync::mpsc;
-use async_trait::async_trait;
 
 #[test]
 fn test_external_display_connector_classification() {
@@ -73,7 +75,9 @@ async fn test_session_manager_sleep_and_wake_lifecycle() {
     assert!(sm.is_tracking_active());
     assert!(!sm.is_sleeping());
 
-    sm.handle_sleep_event(SleepEvent::Sleep, 110.0).await.unwrap();
+    sm.handle_sleep_event(SleepEvent::Sleep, 110.0)
+        .await
+        .unwrap();
     assert!(sm.is_sleeping());
     assert!(!sm.is_tracking_active());
     assert_eq!(sm.current_session_id(), None);
@@ -83,7 +87,9 @@ async fn test_session_manager_sleep_and_wake_lifecycle() {
     assert_eq!(closed_session.end_time, 110.0);
     assert_eq!(closed_session.duration(), 10.0);
 
-    sm.handle_sleep_event(SleepEvent::Wake, 150.0).await.unwrap();
+    sm.handle_sleep_event(SleepEvent::Wake, 150.0)
+        .await
+        .unwrap();
     assert!(!sm.is_sleeping());
     assert!(sm.is_tracking_active());
 
@@ -117,9 +123,13 @@ async fn test_session_manager_short_suspend_eliminates_time_leakage() {
         .unwrap()
         .unwrap();
 
-    sm.handle_sleep_event(SleepEvent::Sleep, 1010.0).await.unwrap();
+    sm.handle_sleep_event(SleepEvent::Sleep, 1010.0)
+        .await
+        .unwrap();
 
-    sm.handle_sleep_event(SleepEvent::Wake, 1025.0).await.unwrap();
+    sm.handle_sleep_event(SleepEvent::Wake, 1025.0)
+        .await
+        .unwrap();
 
     let resumed_id = sm.current_session_id().unwrap();
     assert_ne!(resumed_id, initial_id);
@@ -420,8 +430,7 @@ mod linux_dbus_tests {
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let emitter =
-            zbus::object_server::SignalEmitter::new(&server_conn, object_path).unwrap();
+        let emitter = zbus::object_server::SignalEmitter::new(&server_conn, object_path).unwrap();
         MockLogindManager::prepare_for_sleep(&emitter, true)
             .await
             .unwrap();
