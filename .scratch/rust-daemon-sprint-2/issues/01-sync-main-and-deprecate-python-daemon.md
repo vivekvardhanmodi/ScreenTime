@@ -8,9 +8,9 @@
 
 **Blocked by:** None
 
-**Status:** open
+**Status:** complete
 
-- [ ] Merge `origin/main` with 0 conflicts
-- [ ] Rename Python entrypoint in `pyproject.toml` to `screentimed-legacy`
-- [ ] Add deprecation warning to `screentime/daemon.py`
-- [ ] Verify Python venv installs and runs TUI and Web server without `pywayland`
+- [x] Merge `origin/main` with 0 conflicts
+- [x] Rename Python entrypoint in `pyproject.toml` to `screentimed-legacy`
+- [x] Add deprecation warning to `screentime/daemon.py`
+- [x] Verify Python venv installs and runs TUI and Web server without `pywayland`

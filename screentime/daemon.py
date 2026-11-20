@@ -3,8 +3,9 @@
 Coordinates window tracking, idle detection, and browser URL tracking
 to log activity sessions into the SQLite database.
 
+Deprecated: Use the native Rust daemon ('screentimed') instead.
 Run as: python -m screentime.daemon
-Or directly: screentimed
+Or directly: screentimed-legacy
 """
 
 import asyncio
@@ -14,6 +15,7 @@ import os
 import signal
 import sys
 import time
+import warnings
 from typing import Optional
 
 from screentime import (
@@ -43,22 +45,25 @@ def _browser_url_file(window_class: str) -> Path:
     return get_runtime_dir() / "chrome_url"
 
 
-def read_browser_url(window_class: str) -> Optional[str]:
+async def read_browser_url(window_class: str) -> Optional[str]:
     """Read the current browser tab URL from the state file.
 
     Returns url or None if unavailable.
     """
-    try:
-        url_file = _browser_url_file(window_class)
-        if not url_file.exists():
+    def _read_and_parse():
+        try:
+            url_file = _browser_url_file(window_class)
+            if not url_file.exists():
+                return None
+
+            with open(url_file) as f:
+                data = json.load(f)
+
+            return data.get("url")
+        except (json.JSONDecodeError, IOError, KeyError):
             return None
 
-        with open(url_file) as f:
-            data = json.load(f)
-
-        return data.get("url")
-    except (json.JSONDecodeError, IOError, KeyError):
-        return None
+    return await asyncio.to_thread(_read_and_parse)
 
 
 # ── Session Manager ───────────────────────────────────────────────────
@@ -224,7 +229,7 @@ class SessionManager:
             if self._is_idle or self._is_lid_closed:
                 return
 
-            url = read_browser_url(window.app_class)
+            url = await read_browser_url(window.app_class)
             if url != self._current_url:
                 # Update the existing session in-place (no close+reopen)
                 self._current_url = url
@@ -249,7 +254,7 @@ class SessionManager:
             return
 
         now = time.time()
-        new_url = read_browser_url(self._current_window.app_class)
+        new_url = await read_browser_url(self._current_window.app_class)
         if new_url != self._current_url:
             # Website changed within browser — close old session, start new
             self._close_current_session(now)
@@ -396,8 +401,30 @@ def is_already_running() -> bool:
 
 # ── Main daemon loop ──────────────────────────────────────────────────
 
+_deprecation_warned = False
+
+
+def emit_deprecation_warning():
+    """Warn that the Python daemon is deprecated in favor of native screentimed (Rust)."""
+    global _deprecation_warned
+    if _deprecation_warned:
+        return
+    _deprecation_warned = True
+    warnings.warn(
+        "screentimed-legacy (Python daemon) is deprecated. "
+        "Please run the high-performance native 'screentimed' (Rust) binary instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    log.warning(
+        "DEPRECATION WARNING: screentimed-legacy (Python daemon) is deprecated. "
+        "Please run the high-performance native 'screentimed' (Rust) binary instead."
+    )
+
+
 async def run_daemon():
     """Main entry point for the daemon."""
+    emit_deprecation_warning()
     import screentime
     screentime.init_env()
 
@@ -511,7 +538,8 @@ async def run_daemon():
 
 
 def main():
-    """Entry point for screentime-daemon command."""
+    """Entry point for screentimed-legacy command."""
+    emit_deprecation_warning()
     import argparse
     parser = argparse.ArgumentParser(description="ScreenTime Daemon")
     parser.add_argument("--log-console", action="store_true", help="Log to console")

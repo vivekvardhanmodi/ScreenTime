@@ -4,18 +4,11 @@ Rich terminal interface for viewing screen time statistics,
 managing categories, and exporting data.
 """
 
-import sys
-from datetime import date, datetime, timedelta
-
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
 from textual.widgets import (
     Footer,
     Header,
-    Label,
-    Static,
     TabbedContent,
     TabPane,
 )
