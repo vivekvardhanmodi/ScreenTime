@@ -43,6 +43,9 @@ pub struct SessionManager {
     is_idle: bool,
     last_heartbeat: f64,
     last_known_browser_url: Option<String>,
+    chrome_window_class: String,
+    firefox_window_class: String,
+    heartbeat_interval: Duration,
 }
 
 impl SessionManager {
@@ -61,6 +64,9 @@ impl SessionManager {
             is_idle: false,
             last_heartbeat: 0.0,
             last_known_browser_url: None,
+            chrome_window_class: "google-chrome".to_string(),
+            firefox_window_class: "firefox".to_string(),
+            heartbeat_interval: Duration::from_secs(10),
         }
     }
 
@@ -78,6 +84,49 @@ impl SessionManager {
     pub fn with_rules_ttl(mut self, ttl_secs: f64) -> Self {
         self.rules_ttl = ttl_secs;
         self
+    }
+
+    pub fn with_browser_classes(
+        mut self,
+        chrome: impl Into<String>,
+        firefox: impl Into<String>,
+    ) -> Self {
+        self.chrome_window_class = chrome.into();
+        self.firefox_window_class = firefox.into();
+        self
+    }
+
+    pub fn with_heartbeat_interval(mut self, interval: Duration) -> Self {
+        self.heartbeat_interval = interval;
+        self
+    }
+
+    pub fn with_daemon_config(mut self, config: &crate::config::DaemonConfig) -> Self {
+        self.chrome_window_class = config.chrome_window_class.clone();
+        self.firefox_window_class = config.firefox_window_class.clone();
+        self.heartbeat_interval = Duration::from_secs(config.heartbeat_interval);
+        self
+    }
+
+    pub fn chrome_window_class(&self) -> &str {
+        &self.chrome_window_class
+    }
+
+    pub fn firefox_window_class(&self) -> &str {
+        &self.firefox_window_class
+    }
+
+    pub fn heartbeat_interval(&self) -> Duration {
+        self.heartbeat_interval
+    }
+
+    pub fn is_browser(&self, app_class: &str) -> bool {
+        let lower = app_class.to_lowercase();
+        let chrome_lower = self.chrome_window_class.to_lowercase();
+        let firefox_lower = self.firefox_window_class.to_lowercase();
+        (!chrome_lower.is_empty() && lower.contains(&chrome_lower))
+            || (!firefox_lower.is_empty() && lower.contains(&firefox_lower))
+            || is_browser_app(app_class)
     }
 
     pub fn current_session_id(&self) -> Option<i64> {
@@ -175,7 +224,7 @@ impl SessionManager {
         self.current_effective_class = Some(effective_class.clone());
         self.current_start_time = now;
 
-        let initial_url = if is_browser_app(&win.app_class) {
+        let initial_url = if self.is_browser(&win.app_class) {
             self.last_known_browser_url.clone()
         } else {
             None
@@ -217,7 +266,7 @@ impl SessionManager {
                     self.current_effective_class = Some(effective_class.clone());
                     self.current_start_time = now;
 
-                    let initial_url = if is_browser_app(&win.app_class) {
+                    let initial_url = if self.is_browser(&win.app_class) {
                         self.last_known_browser_url.clone()
                     } else {
                         None
@@ -335,7 +384,8 @@ impl SessionManager {
             return Ok(());
         }
 
-        if self.last_heartbeat > 0.0 && (now - self.last_heartbeat) > 30.0 {
+        let sleep_threshold = (self.heartbeat_interval.as_secs_f64() * 3.0).max(30.0);
+        if self.last_heartbeat > 0.0 && (now - self.last_heartbeat) > sleep_threshold {
             if let Some(id) = self.current_session_id.take() {
                 self.db.close_session(id, self.last_heartbeat, 1.0).await?;
             }
@@ -401,7 +451,7 @@ impl SessionManager {
             self.on_window_change(initial_win).await?;
         }
 
-        let mut heartbeat_ticker = tokio::time::interval(Duration::from_secs(5));
+        let mut heartbeat_ticker = tokio::time::interval(self.heartbeat_interval);
         heartbeat_ticker.tick().await;
 
         loop {

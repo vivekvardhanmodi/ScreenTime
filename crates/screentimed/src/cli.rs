@@ -1,4 +1,4 @@
-use crate::manifests::{default_home_dir, install_manifests, ManifestInstallOptions};
+use crate::manifests::{install_manifests, ManifestInstallOptions};
 use crate::platform::PlatformBackend;
 use crate::{IpcServer, IpcServerError, SessionManager};
 use interprocess::local_socket::tokio::Stream;
@@ -26,6 +26,17 @@ pub struct RunOptions {
     pub socket_path: Option<PathBuf>,
     pub platform: Option<PlatformBackend>,
     pub device_id: Option<String>,
+    pub config_path: Option<PathBuf>,
+    pub data_dir: Option<PathBuf>,
+    pub log_dir: Option<PathBuf>,
+    pub heartbeat_interval: Option<u64>,
+    pub idle_timeout: Option<u64>,
+    pub chrome_window_class: Option<String>,
+    pub firefox_window_class: Option<String>,
+    pub log_level: Option<String>,
+    pub max_size_mb: Option<u64>,
+    pub backup_count: Option<usize>,
+    pub log_console: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -34,73 +45,11 @@ pub struct StatusOptions {
 }
 
 pub fn default_db_path() -> PathBuf {
-    if let Ok(env_path) = std::env::var("SCREENTIME_DB_PATH") {
-        if !env_path.trim().is_empty() {
-            return PathBuf::from(env_path);
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(app_data) = std::env::var("APPDATA") {
-            return PathBuf::from(app_data)
-                .join("screentime")
-                .join("screentime.db");
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        return default_home_dir()
-            .join("Library")
-            .join("Application Support")
-            .join("screentime")
-            .join("screentime.db");
-    }
-
-    if let Ok(xdg_data) = std::env::var("XDG_DATA_HOME") {
-        if !xdg_data.trim().is_empty() {
-            return PathBuf::from(xdg_data)
-                .join("screentime")
-                .join("screentime.db");
-        }
-    }
-
-    default_home_dir()
-        .join(".local")
-        .join("share")
-        .join("screentime")
-        .join("screentime.db")
+    crate::config::default_db_path()
 }
 
 pub fn default_log_dir() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(app_data) = std::env::var("APPDATA") {
-            return PathBuf::from(app_data).join("screentime").join("logs");
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        return default_home_dir()
-            .join("Library")
-            .join("Application Support")
-            .join("screentime")
-            .join("logs");
-    }
-
-    if let Ok(xdg_data) = std::env::var("XDG_DATA_HOME") {
-        if !xdg_data.trim().is_empty() {
-            return PathBuf::from(xdg_data).join("screentime").join("logs");
-        }
-    }
-
-    default_home_dir()
-        .join(".local")
-        .join("share")
-        .join("screentime")
-        .join("logs")
+    crate::config::default_log_dir()
 }
 
 pub fn resolve_socket_path(explicit: Option<&Path>) -> PathBuf {
@@ -132,16 +81,27 @@ SUBCOMMANDS:
     version              Print version information
 
 OPTIONS:
-    --db <PATH>          Path to SQLite database file
-    --socket <PATH>      Path to local IPC domain socket / named pipe
-    --platform <NAME>    Force platform backend (hyprland, kde, wlroots, x11, windows)
-    --device-id <ID>     Device identifier tag for recorded sessions
-    --host-path <PATH>   Path to screentime-browser-host binary (install-manifests only)
-    --extension-id <ID>  Chrome extension ID (install-manifests only)
-    --chrome-dir <DIR>   Custom directory for Chrome native messaging host manifest
-    --firefox-dir <DIR>  Custom directory for Firefox native messaging host manifest
-    -h, --help           Print help information
-    -V, --version        Print version information
+    --config <PATH>              Path to custom config.ini configuration file
+    --data-dir <DIR>             Path to directory storing data and database
+    --log-dir <DIR>              Path to directory storing log files
+    --db <PATH>                  Path to SQLite database file
+    --socket <PATH>              Path to local IPC domain socket / named pipe
+    --platform <NAME>            Force platform backend (hyprland, kde, wlroots, x11, windows)
+    --device-id <ID>             Device identifier tag for recorded sessions
+    --heartbeat-interval <SECS>  Interval between session heartbeats in seconds
+    --idle-timeout <SECS>        Inactivity timeout in seconds before marking user idle
+    --chrome-class <NAME>        Window class name pattern for Chrome browser
+    --firefox-class <NAME>       Window class name pattern for Firefox browser
+    --log-level <LEVEL>          Log level (trace, debug, info, warn, error)
+    --max-size-mb <MB>           Maximum log file size in MB before rolling
+    --backup-count <COUNT>       Number of rotated backup log files to retain
+    --log-console                Output logs to console
+    --host-path <PATH>           Path to screentime-browser-host binary (install-manifests only)
+    --extension-id <ID>          Chrome extension ID (install-manifests only)
+    --chrome-dir <DIR>           Custom directory for Chrome native messaging host manifest
+    --firefox-dir <DIR>          Custom directory for Firefox native messaging host manifest
+    -h, --help                   Print help information
+    -V, --version                Print version information
 "
     );
 }
@@ -278,6 +238,91 @@ where
                 }
                 run_opts.device_id = Some(items[i].clone());
             }
+            "--config" => {
+                i += 1;
+                if i >= items.len() {
+                    return Err("--config requires a config file path argument".to_string());
+                }
+                run_opts.config_path = Some(PathBuf::from(&items[i]));
+            }
+            "--data-dir" => {
+                i += 1;
+                if i >= items.len() {
+                    return Err("--data-dir requires a directory path argument".to_string());
+                }
+                run_opts.data_dir = Some(PathBuf::from(&items[i]));
+            }
+            "--log-dir" => {
+                i += 1;
+                if i >= items.len() {
+                    return Err("--log-dir requires a directory path argument".to_string());
+                }
+                run_opts.log_dir = Some(PathBuf::from(&items[i]));
+            }
+            "--heartbeat-interval" => {
+                i += 1;
+                if i >= items.len() {
+                    return Err("--heartbeat-interval requires an integer seconds argument".to_string());
+                }
+                let val: u64 = items[i]
+                    .parse()
+                    .map_err(|_| "--heartbeat-interval must be a positive integer".to_string())?;
+                run_opts.heartbeat_interval = Some(val);
+            }
+            "--idle-timeout" => {
+                i += 1;
+                if i >= items.len() {
+                    return Err("--idle-timeout requires an integer seconds argument".to_string());
+                }
+                let val: u64 = items[i]
+                    .parse()
+                    .map_err(|_| "--idle-timeout must be a positive integer".to_string())?;
+                run_opts.idle_timeout = Some(val);
+            }
+            "--chrome-class" | "--chrome-window-class" => {
+                i += 1;
+                if i >= items.len() {
+                    return Err(format!("{} requires a window class argument", items[i - 1]));
+                }
+                run_opts.chrome_window_class = Some(items[i].clone());
+            }
+            "--firefox-class" | "--firefox-window-class" => {
+                i += 1;
+                if i >= items.len() {
+                    return Err(format!("{} requires a window class argument", items[i - 1]));
+                }
+                run_opts.firefox_window_class = Some(items[i].clone());
+            }
+            "--log-level" => {
+                i += 1;
+                if i >= items.len() {
+                    return Err("--log-level requires a log level argument".to_string());
+                }
+                run_opts.log_level = Some(items[i].clone());
+            }
+            "--max-size-mb" | "--log-max-size-mb" => {
+                i += 1;
+                if i >= items.len() {
+                    return Err(format!("{} requires a megabyte size argument", items[i - 1]));
+                }
+                let val: u64 = items[i]
+                    .parse()
+                    .map_err(|_| "max_size_mb must be a positive integer".to_string())?;
+                run_opts.max_size_mb = Some(val);
+            }
+            "--backup-count" | "--log-backup-count" => {
+                i += 1;
+                if i >= items.len() {
+                    return Err(format!("{} requires a count argument", items[i - 1]));
+                }
+                let val: usize = items[i]
+                    .parse()
+                    .map_err(|_| "backup_count must be a positive integer".to_string())?;
+                run_opts.backup_count = Some(val);
+            }
+            "--log-console" => {
+                run_opts.log_console = Some(true);
+            }
             other => return Err(format!("Unknown argument: {other}")),
         }
         i += 1;
@@ -325,43 +370,23 @@ pub fn run_install_manifests(opts: ManifestInstallOptions) -> i32 {
 }
 
 pub async fn run_daemon(opts: RunOptions) -> i32 {
-    let platform = match opts.platform {
+    let config = crate::Config::load_from_env_and_cli(&opts);
+
+    let platform = match config.platform {
         Some(p) => p,
-        None => {
-            if let Ok(env_p) = std::env::var("SCREENTIME_PLATFORM") {
-                if !env_p.trim().is_empty() {
-                    match env_p.parse::<PlatformBackend>() {
-                        Ok(p) => p,
-                        Err(e) => {
-                            eprintln!("Error parsing $SCREENTIME_PLATFORM: {e}");
-                            return 1;
-                        }
-                    }
-                } else {
-                    match PlatformBackend::auto_detect() {
-                        Ok(p) => p,
-                        Err(e) => {
-                            eprintln!("Error: {e}");
-                            return 1;
-                        }
-                    }
-                }
-            } else {
-                match PlatformBackend::auto_detect() {
-                    Ok(p) => p,
-                    Err(e) => {
-                        eprintln!("Error: {e}");
-                        return 1;
-                    }
-                }
+        None => match PlatformBackend::auto_detect() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                return 1;
             }
-        }
+        },
     };
 
     info!("Selected platform backend: {platform}");
 
     // Resolve socket and verify single instance
-    let socket_path = resolve_socket_path(opts.socket_path.as_deref());
+    let socket_path = config.socket_path.clone();
     let (url_tx, url_rx) = mpsc::channel::<UrlUpdate>(64);
 
     let mut ipc_handle = match IpcServer::start_with_path(&socket_path, url_tx).await {
@@ -379,7 +404,7 @@ pub async fn run_daemon(opts: RunOptions) -> i32 {
     info!("IPC server listening at {:?}", socket_path);
 
     // Resolve database
-    let db_path = opts.db_path.unwrap_or_else(default_db_path);
+    let db_path = config.db_path.clone();
     if let Some(parent) = db_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -394,13 +419,15 @@ pub async fn run_daemon(opts: RunOptions) -> i32 {
         }
     };
 
-    let device_id = opts.device_id.unwrap_or_else(|| {
+    let device_id = config.device_id.clone().unwrap_or_else(|| {
         std::env::var("HOSTNAME")
             .or_else(|_| std::env::var("COMPUTERNAME"))
             .unwrap_or_else(|_| format!("{platform}-pc"))
     });
 
-    let session_manager = SessionManager::new(db_actor).with_device_id(device_id);
+    let session_manager = SessionManager::new(db_actor)
+        .with_device_id(device_id)
+        .with_daemon_config(&config.daemon);
 
     let tracker = match platform.create_tracker() {
         Ok(t) => t,
@@ -581,6 +608,7 @@ mod tests {
                 socket_path: Some(PathBuf::from("/tmp/my.sock")),
                 platform: Some(PlatformBackend::Hyprland),
                 device_id: Some("my-laptop".to_string()),
+                ..Default::default()
             })
         );
     }
@@ -628,6 +656,53 @@ mod tests {
                 extension_id: Some("abcdef123456".to_string()),
                 chrome_dir: Some(PathBuf::from("/tmp/chrome-nmh")),
                 firefox_dir: Some(PathBuf::from("/tmp/firefox-nmh")),
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_new_config_and_daemon_flags() {
+        let run_args = parse_cli_args(vec![
+            "screentimed",
+            "--config",
+            "/tmp/custom.ini",
+            "--data-dir",
+            "/tmp/data",
+            "--log-dir",
+            "/tmp/logs",
+            "--heartbeat-interval",
+            "15",
+            "--idle-timeout",
+            "180",
+            "--chrome-class",
+            "chromium",
+            "--firefox-class",
+            "floorp",
+            "--log-level",
+            "warn",
+            "--max-size-mb",
+            "20",
+            "--backup-count",
+            "8",
+            "--log-console",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            run_args,
+            Subcommand::Run(RunOptions {
+                config_path: Some(PathBuf::from("/tmp/custom.ini")),
+                data_dir: Some(PathBuf::from("/tmp/data")),
+                log_dir: Some(PathBuf::from("/tmp/logs")),
+                heartbeat_interval: Some(15),
+                idle_timeout: Some(180),
+                chrome_window_class: Some("chromium".to_string()),
+                firefox_window_class: Some("floorp".to_string()),
+                log_level: Some("warn".to_string()),
+                max_size_mb: Some(20),
+                backup_count: Some(8),
+                log_console: Some(true),
+                ..Default::default()
             })
         );
     }

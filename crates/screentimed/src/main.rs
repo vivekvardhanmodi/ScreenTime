@@ -1,4 +1,4 @@
-use screentimed::{default_log_dir, run_main};
+use screentimed::{parse_cli_args, run_main, Config, RunOptions, Subcommand};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -32,8 +32,16 @@ impl Write for DualWriter {
 
 #[tokio::main]
 async fn main() {
-    let log_dir = default_log_dir();
-    let _ = std::fs::create_dir_all(&log_dir);
+    let args: Vec<String> = std::env::args().collect();
+
+    let config = if let Ok(Subcommand::Run(ref opts)) = parse_cli_args(&args) {
+        Config::load_from_env_and_cli(opts)
+    } else {
+        Config::load_from_env_and_cli(&RunOptions::default())
+    };
+
+    let log_dir = &config.paths.log_dir;
+    let _ = std::fs::create_dir_all(log_dir);
     let log_file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -41,7 +49,8 @@ async fn main() {
         .ok()
         .map(|f| Arc::new(Mutex::new(f)));
 
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(&config.logging.level));
 
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
@@ -51,7 +60,6 @@ async fn main() {
         .with_ansi(false)
         .try_init();
 
-    let args: Vec<String> = std::env::args().collect();
     let exit_code = run_main(args).await;
     std::process::exit(exit_code);
 }
