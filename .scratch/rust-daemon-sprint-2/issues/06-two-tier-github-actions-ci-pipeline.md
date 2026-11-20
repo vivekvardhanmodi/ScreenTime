@@ -17,4 +17,4 @@ Deploy a complete CI pipeline in `.github/workflows/ci.yml`:
 - [x] Create headless X11 E2E test script and CI job
 - [x] Create Windows desktop CI test job
 - [x] Create multi-distro Docker smoke test workflow
-- [x] Verify workflow passes cleanly on GitHub Actions
+- [ ] Verify workflow passes cleanly on GitHub Actions (pending git push and CI run)
