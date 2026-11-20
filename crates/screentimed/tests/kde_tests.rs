@@ -72,6 +72,7 @@ struct MockKWinScripting {
 
 #[interface(name = "org.kde.kwin.Scripting")]
 impl MockKWinScripting {
+    #[zbus(name = "loadScript")]
     async fn load_script(&self, file_path: String, plugin_name: String) -> i32 {
         self.loaded_scripts
             .lock()
@@ -89,11 +90,13 @@ impl MockKWinScripting {
         script_id
     }
 
+    #[zbus(name = "unloadScript")]
     async fn unload_script(&self, plugin_name: String) -> bool {
         self.unloaded_scripts.lock().await.push(plugin_name);
         true
     }
 
+    #[zbus(name = "start")]
     async fn start(&self) {
         *self.script_runs.lock().await += 1;
     }
@@ -105,10 +108,12 @@ struct MockKWinScript {
 
 #[interface(name = "org.kde.kwin.Script")]
 impl MockKWinScript {
+    #[zbus(name = "run")]
     async fn run(&self) {
         *self.script_runs.lock().await += 1;
     }
 
+    #[zbus(name = "stop")]
     async fn stop(&self) {}
 }
 

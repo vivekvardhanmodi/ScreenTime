@@ -26,6 +26,14 @@ else
     fi
 fi
 
+if command -v kwin_wayland &>/dev/null; then
+    echo "Running Wayland (KDE KWin) E2E harness..."
+    "$SCRIPT_DIR/test_wayland_kde.sh"
+    RAN_ANY=1
+else
+    echo "Skipping KDE KWin E2E: 'kwin_wayland' not found on PATH."
+fi
+
 if command -v openbox &>/dev/null && (command -v xvfb-run &>/dev/null || [[ -n "${DISPLAY:-}" ]]); then
     echo "Running X11 (Openbox) E2E harness..."
     "$SCRIPT_DIR/test_x11_openbox.sh"

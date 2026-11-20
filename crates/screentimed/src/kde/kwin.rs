@@ -9,14 +9,19 @@ use zbus::proxy;
     default_path = "/Scripting"
 )]
 pub trait KWinScripting {
+    #[zbus(name = "loadScript")]
     fn load_script(&self, file_path: &str, plugin_name: &str) -> zbus::Result<i32>;
+    #[zbus(name = "unloadScript")]
     fn unload_script(&self, plugin_name: &str) -> zbus::Result<bool>;
+    #[zbus(name = "start")]
     fn start(&self) -> zbus::Result<()>;
 }
 
 #[proxy(interface = "org.kde.kwin.Script", default_service = "org.kde.KWin")]
 pub trait KWinScript {
+    #[zbus(name = "run")]
     fn run(&self) -> zbus::Result<()>;
+    #[zbus(name = "stop")]
     fn stop(&self) -> zbus::Result<()>;
 }
 
