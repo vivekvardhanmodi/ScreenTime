@@ -9,9 +9,9 @@ Implement size-capped rolling file logging for `screentimed.log`:
 
 **Blocked by:** 02
 
-**Status:** open
+**Status:** complete
 
-- [ ] Implement size-capped file rolling appender in `screentimed`
-- [ ] Add `--log-level` (trace, debug, info, warn, error) and `--log-console` flags to CLI parser
-- [ ] Ensure non-ANSI formatting in file logs while preserving color in interactive terminal output
-- [ ] Unit/integration tests verifying log file rotation and retention caps
+- [x] Implement size-capped file rolling appender in `screentimed`
+- [x] Add `--log-level` (trace, debug, info, warn, error) and `--log-console` flags to CLI parser
+- [x] Ensure non-ANSI formatting in file logs while preserving color in interactive terminal output
+- [x] Unit/integration tests verifying log file rotation and retention caps

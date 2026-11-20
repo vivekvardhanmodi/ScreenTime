@@ -490,12 +490,13 @@ impl Config {
         let console = cli_opts
             .log_console
             .or_else(|| {
-                env.get_var("SCREENTIME_LOG_CONSOLE")
-                    .and_then(|s| match s.trim().to_lowercase().as_str() {
+                env.get_var("SCREENTIME_LOG_CONSOLE").and_then(|s| {
+                    match s.trim().to_lowercase().as_str() {
                         "1" | "true" | "yes" | "on" => Some(true),
                         "0" | "false" | "no" | "off" => Some(false),
                         _ => None,
-                    })
+                    }
+                })
             })
             .or_else(|| ini.get_bool("Logging", "console"))
             .unwrap_or(false);
@@ -582,7 +583,10 @@ mod tests {
             ini.get_string("daemon", "firefox_window_class"),
             Some("floorp".to_string())
         );
-        assert_eq!(ini.get_string("logging", "level"), Some("DEBUG".to_string()));
+        assert_eq!(
+            ini.get_string("logging", "level"),
+            Some("DEBUG".to_string())
+        );
         assert_eq!(ini.get_u64("logging", "max_size_mb"), Some(50));
         assert_eq!(ini.get_usize("logging", "backup_count"), Some(10));
         assert_eq!(ini.get_bool("logging", "console"), Some(true));

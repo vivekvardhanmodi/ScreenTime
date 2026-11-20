@@ -262,7 +262,9 @@ where
             "--heartbeat-interval" => {
                 i += 1;
                 if i >= items.len() {
-                    return Err("--heartbeat-interval requires an integer seconds argument".to_string());
+                    return Err(
+                        "--heartbeat-interval requires an integer seconds argument".to_string()
+                    );
                 }
                 let val: u64 = items[i]
                     .parse()
@@ -298,12 +300,25 @@ where
                 if i >= items.len() {
                     return Err("--log-level requires a log level argument".to_string());
                 }
-                run_opts.log_level = Some(items[i].clone());
+                let raw_val = &items[i];
+                match raw_val.to_lowercase().as_str() {
+                    "trace" | "debug" | "info" | "warn" | "error" => {
+                        run_opts.log_level = Some(raw_val.clone());
+                    }
+                    _ => {
+                        return Err(format!(
+                            "Invalid log level: '{raw_val}'. Must be one of: trace, debug, info, warn, error"
+                        ));
+                    }
+                }
             }
             "--max-size-mb" | "--log-max-size-mb" => {
                 i += 1;
                 if i >= items.len() {
-                    return Err(format!("{} requires a megabyte size argument", items[i - 1]));
+                    return Err(format!(
+                        "{} requires a megabyte size argument",
+                        items[i - 1]
+                    ));
                 }
                 let val: u64 = items[i]
                     .parse()
@@ -322,6 +337,9 @@ where
             }
             "--log-console" => {
                 run_opts.log_console = Some(true);
+            }
+            "--no-log-console" => {
+                run_opts.log_console = Some(false);
             }
             other => return Err(format!("Unknown argument: {other}")),
         }
@@ -711,6 +729,19 @@ mod tests {
     fn test_parse_errors() {
         assert!(parse_cli_args(vec!["screentimed", "--platform"]).is_err());
         assert!(parse_cli_args(vec!["screentimed", "--platform", "invalid"]).is_err());
+        assert!(parse_cli_args(vec!["screentimed", "--log-level"]).is_err());
+        assert!(parse_cli_args(vec!["screentimed", "--log-level", "invalid"]).is_err());
+        assert!(parse_cli_args(vec!["screentimed", "--max-size-mb", "notanumber"]).is_err());
+        assert!(parse_cli_args(vec!["screentimed", "--backup-count", "notanumber"]).is_err());
         assert!(parse_cli_args(vec!["screentimed", "status", "--invalid"]).is_err());
+
+        let run_no_console = parse_cli_args(vec!["screentimed", "--no-log-console"]).unwrap();
+        assert_eq!(
+            run_no_console,
+            Subcommand::Run(RunOptions {
+                log_console: Some(false),
+                ..Default::default()
+            })
+        );
     }
 }

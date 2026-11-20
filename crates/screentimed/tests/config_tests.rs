@@ -53,15 +53,11 @@ console = true
     fs::write(&ini_path, ini_content).expect("write ini");
 
     let empty_env = HashMap::new();
-    let config =
-        Config::load_with_overrides(&RunOptions::default(), &empty_env, Some(&ini_path));
+    let config = Config::load_with_overrides(&RunOptions::default(), &empty_env, Some(&ini_path));
 
     assert_eq!(config.paths.data_dir, PathBuf::from("/tmp/ini_data"));
     assert_eq!(config.paths.log_dir, PathBuf::from("/tmp/ini_logs"));
-    assert_eq!(
-        config.db_path,
-        PathBuf::from("/tmp/ini_data/screentime.db")
-    );
+    assert_eq!(config.db_path, PathBuf::from("/tmp/ini_data/screentime.db"));
     assert_eq!(config.daemon.heartbeat_interval, 25);
     assert_eq!(config.daemon.idle_timeout, 180);
     assert_eq!(config.daemon.chrome_window_class, "chromium-custom");
@@ -108,7 +104,10 @@ console = false
         "SCREENTIME_DB_PATH".to_string(),
         "/tmp/env_data/custom.db".to_string(),
     );
-    env.insert("SCREENTIME_HEARTBEAT_INTERVAL".to_string(), "35".to_string());
+    env.insert(
+        "SCREENTIME_HEARTBEAT_INTERVAL".to_string(),
+        "35".to_string(),
+    );
     env.insert("SCREENTIME_IDLE_TIMEOUT".to_string(), "240".to_string());
     env.insert(
         "SCREENTIME_CHROME_CLASS".to_string(),
@@ -166,7 +165,10 @@ console = false
         "SCREENTIME_DATA_DIR".to_string(),
         "/tmp/env_data".to_string(),
     );
-    env.insert("SCREENTIME_HEARTBEAT_INTERVAL".to_string(), "20".to_string());
+    env.insert(
+        "SCREENTIME_HEARTBEAT_INTERVAL".to_string(),
+        "20".to_string(),
+    );
     env.insert("SCREENTIME_LOG_LEVEL".to_string(), "WARN".to_string());
     env.insert("SCREENTIME_LOG_CONSOLE".to_string(), "false".to_string());
 
@@ -243,11 +245,8 @@ fn test_malformed_config_ini_graceful_recovery() {
     fs::write(&malformed_path, malformed_content).expect("write malformed");
 
     let empty_env = HashMap::new();
-    let config = Config::load_with_overrides(
-        &RunOptions::default(),
-        &empty_env,
-        Some(&malformed_path),
-    );
+    let config =
+        Config::load_with_overrides(&RunOptions::default(), &empty_env, Some(&malformed_path));
 
     // Invalid heartbeat_interval falls back to default 10
     assert_eq!(config.daemon.heartbeat_interval, 10);
