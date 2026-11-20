@@ -17,9 +17,15 @@ chmod 0700 "$XDG_RUNTIME_DIR"
 export WLR_BACKENDS=headless
 export WLR_LIBINPUT_NO_DEVICES=1
 export SWAYSOCK="$XDG_RUNTIME_DIR/sway-ipc.sock"
-export WAYLAND_DISPLAY="wayland-screentime-test"
 
 cleanup() {
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        echo "=== Sway Log ==="
+        cat "$TEST_DIR/sway.log" 2>/dev/null || true
+        echo "=== Screentimed Log ==="
+        cat "$TEST_DIR/screentimed.log" 2>/dev/null || true
+    fi
     echo "Cleaning up Wayland E2E test resources..."
     if [[ -n "${APP1_PID:-}" ]]; then kill -9 "$APP1_PID" 2>/dev/null || true; fi
     if [[ -n "${APP2_PID:-}" ]]; then kill -9 "$APP2_PID" 2>/dev/null || true; fi
@@ -78,6 +84,23 @@ if [[ $SWAY_READY -ne 1 ]]; then
     exit 1
 fi
 echo "Sway compositor initialized successfully."
+
+# Detect Wayland socket created by Sway
+WAYLAND_DISPLAY=""
+for sock in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do
+    if [[ -S "$sock" ]]; then
+        WAYLAND_DISPLAY="$(basename "$sock")"
+        break
+    fi
+done
+
+if [[ -z "$WAYLAND_DISPLAY" ]]; then
+    echo "ERROR: Failed to detect Wayland display socket in $XDG_RUNTIME_DIR" >&2
+    ls -la "$XDG_RUNTIME_DIR" || true
+    exit 1
+fi
+export WAYLAND_DISPLAY
+echo "Detected active WAYLAND_DISPLAY=$WAYLAND_DISPLAY"
 
 TEST_DB="$TEST_DIR/test_wayland_screentime.db"
 TEST_SOCKET="$TEST_DIR/screentime.sock"
@@ -178,7 +201,7 @@ conn = sqlite3.connect(db_path)
 cur = conn.cursor()
 
 rows = cur.execute(
-    "SELECT id, start_time, end_time, app_class, app_title FROM window_activity ORDER BY id ASC"
+    "SELECT id, start_time, end_time, app_class, app_title FROM sessions ORDER BY id ASC"
 ).fetchall()
 
 print(f"Total recorded sessions in {db_path}: {len(rows)}")

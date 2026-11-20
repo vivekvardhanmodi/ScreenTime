@@ -160,7 +160,7 @@ conn = sqlite3.connect(db_path)
 cur = conn.cursor()
 
 rows = cur.execute(
-    "SELECT id, start_time, end_time, app_class, app_title FROM window_activity ORDER BY id ASC"
+    "SELECT id, start_time, end_time, app_class, app_title FROM sessions ORDER BY id ASC"
 ).fetchall()
 
 print(f"Total recorded sessions in {db_path}: {len(rows)}")
