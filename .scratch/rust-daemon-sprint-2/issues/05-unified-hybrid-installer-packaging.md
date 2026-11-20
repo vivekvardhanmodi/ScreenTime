@@ -10,10 +10,10 @@ Refactor `install.sh` to package and wire the hybrid Rust daemon and Python UI s
 
 **Blocked by:** 01, 02, 03, 04
 
-**Status:** open
+**Status:** complete
 
-- [ ] Add `cargo build --release` step and binary installation to `install.sh`
-- [ ] Replace hand-rolled manifest creation with `screentimed install-manifests`
-- [ ] Update symlinks in `~/.local/bin/` so `screentimed` points to the Rust release binary
-- [ ] Drop `pywayland` and Wayland header requirements from `install.sh`
-- [ ] Test end-to-end installation on local system
+- [x] Add `cargo build --release` step and binary installation to `install.sh`
+- [x] Replace hand-rolled manifest creation with `screentimed install-manifests`
+- [x] Update symlinks in `~/.local/bin/` so `screentimed` points to the Rust release binary
+- [x] Drop `pywayland` and Wayland header requirements from `install.sh`
+- [x] Test end-to-end installation on local system
