@@ -1,3 +1,4 @@
+use crate::sleep::SleepEvent;
 use screentime_core::ipc::UrlUpdate;
 use screentime_core::{
     DbActorHandle, DbError, IdleDetector, IdleState, Session, TitleRulesCache, WindowInfo,
@@ -41,6 +42,10 @@ pub struct SessionManager {
     current_effective_class: Option<String>,
     current_url: Option<String>,
     is_idle: bool,
+    is_sleeping: bool,
+    is_lid_closed: bool,
+    has_external_display: bool,
+    sleep_rx: Option<mpsc::Receiver<SleepEvent>>,
     last_heartbeat: f64,
     last_known_browser_url: Option<String>,
     chrome_window_class: String,
@@ -62,6 +67,10 @@ impl SessionManager {
             current_effective_class: None,
             current_url: None,
             is_idle: false,
+            is_sleeping: false,
+            is_lid_closed: false,
+            has_external_display: false,
+            sleep_rx: None,
             last_heartbeat: 0.0,
             last_known_browser_url: None,
             chrome_window_class: "google-chrome".to_string(),
@@ -105,6 +114,11 @@ impl SessionManager {
         self.chrome_window_class = config.chrome_window_class.clone();
         self.firefox_window_class = config.firefox_window_class.clone();
         self.heartbeat_interval = Duration::from_secs(config.heartbeat_interval);
+        self
+    }
+
+    pub fn with_sleep_receiver(mut self, rx: mpsc::Receiver<SleepEvent>) -> Self {
+        self.sleep_rx = Some(rx);
         self
     }
 
@@ -153,6 +167,22 @@ impl SessionManager {
         self.is_idle
     }
 
+    pub fn is_sleeping(&self) -> bool {
+        self.is_sleeping
+    }
+
+    pub fn is_lid_closed(&self) -> bool {
+        self.is_lid_closed
+    }
+
+    pub fn has_external_display(&self) -> bool {
+        self.has_external_display
+    }
+
+    pub fn is_tracking_active(&self) -> bool {
+        !self.is_idle && !self.is_sleeping && (!self.is_lid_closed || self.has_external_display)
+    }
+
     pub async fn on_window_change(
         &mut self,
         window: Option<WindowInfo>,
@@ -162,6 +192,10 @@ impl SessionManager {
 
     pub async fn on_idle_change(&mut self, state: IdleState) -> Result<(), DbError> {
         self.handle_idle_change(state, current_time()).await
+    }
+
+    pub async fn on_sleep_event(&mut self, event: SleepEvent) -> Result<(), DbError> {
+        self.handle_sleep_event(event, current_time()).await
     }
 
     pub async fn on_browser_url(&mut self, url: impl Into<String>) -> Result<(), DbError> {
@@ -180,17 +214,91 @@ impl SessionManager {
         self.handle_shutdown(current_time()).await
     }
 
+    async fn resume_tracking_if_active(&mut self, now: f64) -> Result<(), DbError> {
+        if !self.is_tracking_active() || self.current_session_id.is_some() {
+            return Ok(());
+        }
+
+        if let Some(win) = self.current_window.clone() {
+            let effective_class = self
+                .title_rules
+                .resolve_app_class(&win.app_class, Some(&win.title));
+
+            self.current_effective_class = Some(effective_class.clone());
+            self.current_start_time = now;
+
+            let initial_url = if self.is_browser(&win.app_class) {
+                self.last_known_browser_url.clone()
+            } else {
+                None
+            };
+            self.current_url = initial_url.clone();
+
+            let mut session = Session::new(now, now, effective_class)
+                .with_title(win.title)
+                .with_device_id(self.device_id.clone());
+
+            if let Some(u) = initial_url {
+                session = session.with_url(u);
+            }
+
+            let new_id = self.db.insert_session(session).await?;
+            self.current_session_id = Some(new_id);
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_sleep_event(&mut self, event: SleepEvent, now: f64) -> Result<(), DbError> {
+        match event {
+            SleepEvent::Sleep => {
+                self.is_sleeping = true;
+                if let Some(id) = self.current_session_id.take() {
+                    self.db.close_session(id, now, 1.0).await?;
+                }
+                self.current_start_time = 0.0;
+                self.current_url = None;
+                self.current_effective_class = None;
+            }
+            SleepEvent::Wake => {
+                self.is_sleeping = false;
+                self.resume_tracking_if_active(now).await?;
+            }
+            SleepEvent::LidClosed {
+                has_external_display,
+            } => {
+                self.is_lid_closed = true;
+                self.has_external_display = has_external_display;
+                if has_external_display {
+                    self.resume_tracking_if_active(now).await?;
+                } else {
+                    if let Some(id) = self.current_session_id.take() {
+                        self.db.close_session(id, now, 1.0).await?;
+                    }
+                    self.current_start_time = 0.0;
+                    self.current_url = None;
+                    self.current_effective_class = None;
+                }
+            }
+            SleepEvent::LidOpened => {
+                self.is_lid_closed = false;
+                self.resume_tracking_if_active(now).await?;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn handle_window_change(
         &mut self,
         window: Option<WindowInfo>,
         now: f64,
     ) -> Result<Option<i64>, DbError> {
-        if self.is_idle {
+        if !self.is_tracking_active() {
             self.current_window = window;
             return Ok(None);
         }
 
-        if self.current_window.as_ref() == window.as_ref() {
+        if self.current_session_id.is_some() && self.current_window.as_ref() == window.as_ref() {
             return Ok(self.current_session_id);
         }
 
@@ -297,7 +405,7 @@ impl SessionManager {
             return Ok(());
         };
 
-        if self.is_idle || self.current_window.is_none() {
+        if !self.is_tracking_active() || self.current_window.is_none() {
             if let Some(url) = update.url {
                 self.last_known_browser_url = Some(url);
             }
@@ -380,7 +488,7 @@ impl SessionManager {
     }
 
     pub async fn handle_heartbeat(&mut self, now: f64) -> Result<(), DbError> {
-        if self.is_idle {
+        if !self.is_tracking_active() {
             return Ok(());
         }
 
@@ -424,6 +532,23 @@ impl SessionManager {
         Ok(())
     }
 
+    pub async fn run_loop_with_sleep<W, I, U>(
+        mut self,
+        tracker: W,
+        idle: I,
+        url_rx: mpsc::Receiver<U>,
+        sleep_rx: mpsc::Receiver<SleepEvent>,
+        shutdown_rx: mpsc::Receiver<()>,
+    ) -> Result<(), DbError>
+    where
+        W: WindowTracker,
+        I: IdleDetector,
+        U: Into<UrlUpdate> + Send + 'static,
+    {
+        self.sleep_rx = Some(sleep_rx);
+        self.run_loop(tracker, idle, url_rx, shutdown_rx).await
+    }
+
     pub async fn run_loop<W, I, U>(
         mut self,
         mut tracker: W,
@@ -447,6 +572,8 @@ impl SessionManager {
             .await
             .map_err(|e| DbError::Other(e.to_string()))?;
 
+        let mut sleep_rx = self.sleep_rx.take();
+
         if let Ok(initial_win) = tracker.query_active_window().await {
             self.on_window_change(initial_win).await?;
         }
@@ -468,6 +595,22 @@ impl SessionManager {
                     let update = url.into();
                     debug!("Browser URL received: {:?}", update);
                     self.on_url_update(update).await?;
+                }
+                sleep_event = async {
+                    match sleep_rx.as_mut() {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    match sleep_event {
+                        Some(event) => {
+                            debug!("Sleep event received: {:?}", event);
+                            self.on_sleep_event(event).await?;
+                        }
+                        None => {
+                            sleep_rx = None;
+                        }
+                    }
                 }
                 _ = heartbeat_ticker.tick() => {
                     self.heartbeat().await?;

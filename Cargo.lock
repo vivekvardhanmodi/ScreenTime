@@ -635,6 +635,7 @@ name = "screentimed"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "futures-lite",
  "interprocess",
  "libc",
  "rusqlite",

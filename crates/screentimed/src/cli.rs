@@ -443,9 +443,23 @@ pub async fn run_daemon(opts: RunOptions) -> i32 {
             .unwrap_or_else(|_| format!("{platform}-pc"))
     });
 
+    let (sleep_tx, sleep_rx) = mpsc::channel(16);
+
     let session_manager = SessionManager::new(db_actor)
         .with_device_id(device_id)
         .with_daemon_config(&config.daemon);
+
+    #[cfg(target_os = "linux")]
+    let sleep_listener = match crate::sleep::LogindSleepListener::start(sleep_tx.clone()).await {
+        Ok(listener) => {
+            info!("Systemd-logind sleep and clamshell listener active");
+            Some(listener)
+        }
+        Err(e) => {
+            warn!("Systemd-logind listener unavailable: {e}");
+            None
+        }
+    };
 
     let tracker = match platform.create_tracker() {
         Ok(t) => t,
@@ -456,7 +470,7 @@ pub async fn run_daemon(opts: RunOptions) -> i32 {
         }
     };
 
-    let idle_detector = match platform.create_idle_detector() {
+    let idle_detector = match platform.create_idle_detector_with_sleep(Some(sleep_tx)) {
         Ok(i) => i,
         Err(e) => {
             eprintln!("Failed to initialize idle detector: {e}");
@@ -475,11 +489,17 @@ pub async fn run_daemon(opts: RunOptions) -> i32 {
 
     info!("Starting screentimed event loop...");
     let loop_res = session_manager
+        .with_sleep_receiver(sleep_rx)
         .run_loop(tracker, idle_detector, url_rx, shutdown_rx)
         .await;
 
     // Shutdown IPC server and clean up socket
     ipc_handle.shutdown().await;
+
+    #[cfg(target_os = "linux")]
+    if let Some(mut listener) = sleep_listener {
+        let _ = listener.stop().await;
+    }
 
     match loop_res {
         Ok(()) => {

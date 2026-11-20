@@ -20,8 +20,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use super::events::{
-    parse_display_power_state, parse_session_change_event, PlatformEvent, PBT_POWERSETTINGCHANGE,
-    WM_POWERBROADCAST, WM_WTSSESSION_CHANGE,
+    parse_display_power_state, parse_power_broadcast, parse_session_change_event, PlatformEvent,
+    PBT_POWERSETTINGCHANGE, WM_POWERBROADCAST, WM_WTSSESSION_CHANGE,
 };
 use super::win32_utils::{
     get_process_path_and_name, get_window_title, resolve_real_process_for_hwnd, SetWinEventHook,
@@ -94,6 +94,12 @@ unsafe extern "system" fn wnd_proc(
                                 let _ = tx.send(event);
                             }
                         }
+                    }
+                }
+            } else if let Some(event) = parse_power_broadcast(wparam) {
+                if let Ok(guard) = GLOBAL_TX.lock() {
+                    if let Some(ref tx) = *guard {
+                        let _ = tx.send(event);
                     }
                 }
             }

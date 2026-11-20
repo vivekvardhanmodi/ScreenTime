@@ -6,6 +6,7 @@ pub mod logging;
 pub mod manifests;
 pub mod platform;
 pub mod session_manager;
+pub mod sleep;
 
 #[cfg(target_os = "linux")]
 pub mod kde;
@@ -38,6 +39,10 @@ pub use manifests::{
 };
 pub use platform::{PlatformBackend, PlatformError};
 pub use session_manager::{current_time, is_browser_app, SessionManager};
+pub use sleep::{has_external_display, has_external_display_in, is_internal_connector, SleepEvent};
+
+#[cfg(target_os = "linux")]
+pub use sleep::LogindSleepListener;
 
 #[cfg(target_os = "linux")]
 pub use kde::KdeWindowTracker;

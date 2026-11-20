@@ -24,7 +24,21 @@ pub enum PlatformEvent {
 
     /// User logged off.
     SessionLogoff,
+
+    /// System entering power suspend / sleep.
+    Suspend,
+
+    /// System resuming from power suspend / sleep.
+    Resume,
 }
+
+/// Win32 Power Broadcast event codes.
+#[allow(dead_code)]
+pub const PBT_APMSUSPEND: usize = 0x0004;
+#[allow(dead_code)]
+pub const PBT_APMRESUMESUSPEND: usize = 0x0007;
+#[allow(dead_code)]
+pub const PBT_APMRESUMEAUTOMATIC: usize = 0x0012;
 
 /// Win32 Session Change notification codes from `Wtsapi32.h`.
 #[allow(dead_code)]
@@ -73,6 +87,15 @@ pub fn parse_session_change_event(wparam: usize) -> Option<PlatformEvent> {
         WTS_SESSION_LOCK => Some(PlatformEvent::SessionLocked),
         WTS_SESSION_UNLOCK => Some(PlatformEvent::SessionUnlocked),
         WTS_SESSION_LOGOFF => Some(PlatformEvent::SessionLogoff),
+        _ => None,
+    }
+}
+
+/// Parses a `WM_POWERBROADCAST` message wParam code for system suspend/resume events.
+pub fn parse_power_broadcast(wparam: usize) -> Option<PlatformEvent> {
+    match wparam {
+        PBT_APMSUSPEND => Some(PlatformEvent::Suspend),
+        PBT_APMRESUMESUSPEND | PBT_APMRESUMEAUTOMATIC => Some(PlatformEvent::Resume),
         _ => None,
     }
 }
@@ -129,6 +152,24 @@ mod tests {
         );
         assert_eq!(parse_session_change_event(WTS_SESSION_LOGON), None);
         assert_eq!(parse_session_change_event(999), None);
+    }
+
+    #[test]
+    fn test_parse_power_broadcast() {
+        assert_eq!(
+            parse_power_broadcast(PBT_APMSUSPEND),
+            Some(PlatformEvent::Suspend)
+        );
+        assert_eq!(
+            parse_power_broadcast(PBT_APMRESUMESUSPEND),
+            Some(PlatformEvent::Resume)
+        );
+        assert_eq!(
+            parse_power_broadcast(PBT_APMRESUMEAUTOMATIC),
+            Some(PlatformEvent::Resume)
+        );
+        assert_eq!(parse_power_broadcast(0), None);
+        assert_eq!(parse_power_broadcast(999), None);
     }
 
     #[test]

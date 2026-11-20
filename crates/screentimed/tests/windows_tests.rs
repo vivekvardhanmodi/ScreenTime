@@ -1,3 +1,4 @@
+use screentimed::sleep;
 #[path = "../src/windows/mod.rs"]
 mod windows;
 
@@ -492,4 +493,60 @@ async fn test_windows_tracker_and_idle_with_session_manager() {
 
     // Drop handle
     drop(handle);
+}
+
+#[tokio::test]
+async fn test_windows_power_suspend_resume_with_session_manager() {
+    let temp = tempdir().expect("tempdir");
+    let db_path = temp.path().join("screentime.db");
+    let db = DbActorHandle::spawn(&db_path).expect("spawn db actor");
+
+    let (tracker_tx, tracker_rx) = mpsc::unbounded_channel::<PlatformEvent>();
+    let (idle_event_tx, idle_event_rx) = mpsc::unbounded_channel::<PlatformEvent>();
+    let (sleep_tx, sleep_rx) = mpsc::channel::<sleep::SleepEvent>(16);
+    let (_url_tx, url_rx) = mpsc::channel::<screentime_core::ipc::UrlUpdate>(16);
+    let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+
+    let tracker = WindowsTracker::new().with_mock_receiver(tracker_rx);
+    let idle = WindowsIdleDetector::default()
+        .with_mock_receiver(idle_event_rx)
+        .with_sleep_sender(sleep_tx);
+
+    let sm = SessionManager::new(db.clone()).with_device_id("windows-test-pc");
+    let db_clone = db.clone();
+
+    let run_handle = tokio::spawn(async move {
+        sm.run_loop_with_sleep(tracker, idle, url_rx, sleep_rx, shutdown_rx)
+            .await
+    });
+
+    tracker_tx
+        .send(PlatformEvent::WindowChanged(Some(WindowInfo {
+            app_class: "notepad.exe".to_string(),
+            title: "Untitled - Notepad".to_string(),
+        })))
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+
+    let initial_sessions = db_clone.get_sessions_in_range(0.0, 1e12).await.unwrap();
+    assert_eq!(initial_sessions.len(), 1);
+    let s1_id = initial_sessions[0].id.unwrap();
+
+    idle_event_tx.send(PlatformEvent::Suspend).unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let s1 = db_clone.get_session(s1_id).await.unwrap().unwrap();
+    assert!(s1.end_time >= s1.start_time);
+
+    idle_event_tx.send(PlatformEvent::Resume).unwrap();
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+
+    let resumed_sessions = db_clone.get_sessions_in_range(0.0, 1e12).await.unwrap();
+    assert_eq!(resumed_sessions.len(), 2, "New session created upon wake");
+    let s2_id = resumed_sessions.iter().map(|s| s.id.unwrap()).max().unwrap();
+    assert_ne!(s1_id, s2_id);
+
+    shutdown_tx.send(()).await.unwrap();
+    run_handle.await.unwrap().expect("run_loop exited cleanly");
 }

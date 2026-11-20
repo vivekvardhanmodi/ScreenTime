@@ -153,6 +153,16 @@ impl PlatformBackend {
 
     /// Instantiate the IdleDetector for this platform backend.
     pub fn create_idle_detector(&self) -> Result<Box<dyn IdleDetector>, PlatformError> {
+        self.create_idle_detector_with_sleep(None)
+    }
+
+    /// Instantiate the IdleDetector for this platform backend with optional sleep event routing.
+    pub fn create_idle_detector_with_sleep(
+        &self,
+        #[allow(unused_variables)] sleep_tx: Option<
+            tokio::sync::mpsc::Sender<crate::sleep::SleepEvent>,
+        >,
+    ) -> Result<Box<dyn IdleDetector>, PlatformError> {
         match self {
             #[cfg(target_os = "linux")]
             Self::Hyprland => {
@@ -192,7 +202,11 @@ impl PlatformBackend {
             #[cfg(target_os = "windows")]
             Self::Windows => {
                 info!("Initializing Windows idle detector");
-                Ok(Box::new(crate::windows::WindowsIdleDetector::default()))
+                let mut detector = crate::windows::WindowsIdleDetector::default();
+                if let Some(tx) = sleep_tx {
+                    detector = detector.with_sleep_sender(tx);
+                }
+                Ok(Box::new(detector))
             }
             #[allow(unreachable_patterns)]
             _ => Err(PlatformError::UnsupportedPlatform(*self)),

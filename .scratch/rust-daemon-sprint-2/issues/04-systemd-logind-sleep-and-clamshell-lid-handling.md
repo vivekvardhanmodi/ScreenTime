@@ -10,10 +10,10 @@
 
 **Blocked by:** 02
 
-**Status:** open
+**Status:** completed
 
-- [ ] Implement `LogindSleepListener` using `zbus` on Linux system bus
-- [ ] Implement clamshell display check before pausing on lid closure
-- [ ] Connect sleep/wake events to `SessionManager` state machine
-- [ ] Implement Windows power suspend notification handler
-- [ ] Integration tests verifying clean session close and wake-up session creation
+- [x] Implement `LogindSleepListener` using `zbus` on Linux system bus
+- [x] Implement clamshell display check before pausing on lid closure
+- [x] Connect sleep/wake events to `SessionManager` state machine
+- [x] Implement Windows power suspend notification handler
+- [x] Integration tests verifying clean session close and wake-up session creation

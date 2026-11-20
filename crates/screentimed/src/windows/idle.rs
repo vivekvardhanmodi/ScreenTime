@@ -21,6 +21,7 @@ pub struct WindowsIdleDetector {
     join_handle: Option<JoinHandle<()>>,
     mock_event_rx: Option<mpsc::UnboundedReceiver<PlatformEvent>>,
     mock_tick_fn: Option<MockTickFn>,
+    sleep_tx: Option<mpsc::Sender<crate::sleep::SleepEvent>>,
     #[cfg(target_os = "windows")]
     listener_handle: Option<super::listener::Win32ListenerHandle>,
 }
@@ -41,9 +42,15 @@ impl WindowsIdleDetector {
             join_handle: None,
             mock_event_rx: None,
             mock_tick_fn: None,
+            sleep_tx: None,
             #[cfg(target_os = "windows")]
             listener_handle: None,
         }
+    }
+
+    pub fn with_sleep_sender(mut self, tx: mpsc::Sender<crate::sleep::SleepEvent>) -> Self {
+        self.sleep_tx = Some(tx);
+        self
     }
 
     pub fn with_idle_threshold(mut self, threshold: Duration) -> Self {
@@ -100,6 +107,7 @@ impl IdleDetector for WindowsIdleDetector {
         let idle_threshold = self.idle_threshold;
         let resume_threshold = self.resume_threshold;
         let mock_tick_fn = self.mock_tick_fn.clone();
+        let sleep_tx = self.sleep_tx.clone();
 
         // Mode 1: Mock mode (works across all platforms, including Linux test harness)
         if self.mock_event_rx.is_some() || self.mock_tick_fn.is_some() {
@@ -134,6 +142,30 @@ impl IdleDetector for WindowsIdleDetector {
                                     }
                                 }
                                 Some(PlatformEvent::DisplayOn) | Some(PlatformEvent::SessionUnlocked) => {
+                                    if current_state != IdleState::Active {
+                                        current_state = IdleState::Active;
+                                        is_idle_atomic.store(false, Ordering::SeqCst);
+                                        if tx.send(IdleState::Active).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                                Some(PlatformEvent::Suspend) => {
+                                    if let Some(ref stx) = sleep_tx {
+                                        let _ = stx.send(crate::sleep::SleepEvent::Sleep).await;
+                                    }
+                                    if current_state != IdleState::Idle {
+                                        current_state = IdleState::Idle;
+                                        is_idle_atomic.store(true, Ordering::SeqCst);
+                                        if tx.send(IdleState::Idle).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                                Some(PlatformEvent::Resume) => {
+                                    if let Some(ref stx) = sleep_tx {
+                                        let _ = stx.send(crate::sleep::SleepEvent::Wake).await;
+                                    }
                                     if current_state != IdleState::Active {
                                         current_state = IdleState::Active;
                                         is_idle_atomic.store(false, Ordering::SeqCst);
@@ -218,6 +250,32 @@ impl IdleDetector for WindowsIdleDetector {
                                 }
                                 Some(PlatformEvent::DisplayOn) | Some(PlatformEvent::SessionUnlocked) => {
                                     debug!("DisplayOn or SessionUnlocked received -> Active");
+                                    if current_state != IdleState::Active {
+                                        current_state = IdleState::Active;
+                                        is_idle_atomic.store(false, Ordering::SeqCst);
+                                        if tx.send(IdleState::Active).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                                Some(PlatformEvent::Suspend) => {
+                                    debug!("Suspend received -> notifying sleep");
+                                    if let Some(ref stx) = sleep_tx {
+                                        let _ = stx.send(crate::sleep::SleepEvent::Sleep).await;
+                                    }
+                                    if current_state != IdleState::Idle {
+                                        current_state = IdleState::Idle;
+                                        is_idle_atomic.store(true, Ordering::SeqCst);
+                                        if tx.send(IdleState::Idle).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                                Some(PlatformEvent::Resume) => {
+                                    debug!("Resume received -> notifying wake");
+                                    if let Some(ref stx) = sleep_tx {
+                                        let _ = stx.send(crate::sleep::SleepEvent::Wake).await;
+                                    }
                                     if current_state != IdleState::Active {
                                         current_state = IdleState::Active;
                                         is_idle_atomic.store(false, Ordering::SeqCst);
