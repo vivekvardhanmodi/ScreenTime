@@ -153,6 +153,10 @@ impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for WlrForeignToplevelState {
             _ => {}
         }
     }
+
+    wayland_client::event_created_child!(WlrForeignToplevelState, ZwlrForeignToplevelManagerV1, [
+        0 => (ZwlrForeignToplevelHandleV1, ()),
+    ]);
 }
 
 impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for WlrForeignToplevelState {

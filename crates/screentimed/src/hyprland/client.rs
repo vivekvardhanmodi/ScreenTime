@@ -154,11 +154,11 @@ pub async fn query_socket1(socket_dir: &Path, command: &[u8]) -> Result<Vec<u8>,
 }
 
 pub async fn query_active_window_at(socket_dir: &Path) -> Result<Option<WindowInfo>, TrackerError> {
-    let buf = query_socket1(socket_dir, b"j/activewindow\n").await?;
+    let buf = query_socket1(socket_dir, b"j/activewindow").await?;
     parse_active_window_json(&buf)
 }
 
 pub async fn query_monitors_at(socket_dir: &Path) -> Result<IdleState, TrackerError> {
-    let buf = query_socket1(socket_dir, b"j/monitors\n").await?;
+    let buf = query_socket1(socket_dir, b"j/monitors").await?;
     parse_monitors_json(&buf)
 }
