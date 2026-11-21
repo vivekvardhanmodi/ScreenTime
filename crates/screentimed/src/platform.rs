@@ -60,6 +60,21 @@ pub enum PlatformError {
     Tracker(#[from] TrackerError),
 }
 
+#[cfg(target_os = "linux")]
+fn is_wayland_socket_available() -> bool {
+    let display = match std::env::var("WAYLAND_DISPLAY") {
+        Ok(d) if !d.is_empty() => d,
+        _ => return false,
+    };
+    if display.starts_with('/') {
+        std::path::Path::new(&display).exists()
+    } else if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        std::path::Path::new(&runtime_dir).join(&display).exists()
+    } else {
+        false
+    }
+}
+
 impl PlatformBackend {
     /// Auto-detect the active desktop environment / platform backend inspecting standard environment
     /// variables ($HYPRLAND_INSTANCE_SIGNATURE, $XDG_CURRENT_DESKTOP, $WAYLAND_DISPLAY, $DISPLAY)
@@ -168,20 +183,27 @@ impl PlatformBackend {
         match self {
             #[cfg(target_os = "linux")]
             Self::Hyprland => {
-                info!("Initializing Hyprland idle detector");
-                let mut detector = crate::hyprland::HyprlandIdleDetector::new();
-                if let Some(timeout) = idle_timeout {
-                    detector = detector.with_idle_timeout(timeout);
+                // Hyprland natively supports ext-idle-notify-v1 and zwlr_output_power_manager_v1 over Wayland
+                if is_wayland_socket_available() {
+                    info!("Initializing Wayland idle detector for Hyprland (ext-idle-notify-v1)");
+                    let mut detector = crate::wlroots::WaylandIdleDetector::new();
+                    if let Some(timeout) = idle_timeout {
+                        detector = detector.with_idle_timeout(timeout);
+                    }
+                    Ok(Box::new(detector))
+                } else {
+                    info!("Initializing Hyprland socket idle detector fallback (DPMS-only)");
+                    let mut detector = crate::hyprland::HyprlandIdleDetector::new();
+                    if let Some(timeout) = idle_timeout {
+                        detector = detector.with_idle_timeout(timeout);
+                    }
+                    Ok(Box::new(detector))
                 }
-                Ok(Box::new(detector))
             }
             #[cfg(target_os = "linux")]
             Self::Kde => {
                 // KDE Wayland natively supports ext-idle-notify-v1
-                if std::env::var("WAYLAND_DISPLAY")
-                    .map(|s| !s.is_empty())
-                    .unwrap_or(false)
-                {
+                if is_wayland_socket_available() {
                     info!("Initializing Wayland idle detector for KDE");
                     let mut detector = crate::wlroots::WaylandIdleDetector::new();
                     if let Some(timeout) = idle_timeout {
@@ -337,10 +359,37 @@ mod tests {
     fn test_create_idle_detector_with_non_default_timeout() {
         let custom_timeout = Duration::from_secs(42);
 
+        // When WAYLAND_DISPLAY socket is not present, Hyprland falls back to HyprlandIdleDetector
+        let orig_wl = std::env::var("WAYLAND_DISPLAY").ok();
+        let orig_xdg = std::env::var("XDG_RUNTIME_DIR").ok();
+        std::env::set_var("WAYLAND_DISPLAY", "nonexistent-wayland-socket-1234");
         let hyprland_detector = PlatformBackend::Hyprland
             .create_idle_detector_with_sleep(None, Some(custom_timeout))
             .expect("failed to create hyprland idle detector");
         assert_eq!(hyprland_detector.idle_timeout(), Some(custom_timeout));
+
+        // When a socket file exists at $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY, Wayland detector is chosen
+        let temp = tempfile::tempdir().unwrap();
+        let sock_path = temp.path().join("wayland-mock-test-0");
+        std::fs::File::create(&sock_path).unwrap();
+        std::env::set_var("WAYLAND_DISPLAY", "wayland-mock-test-0");
+        std::env::set_var("XDG_RUNTIME_DIR", temp.path());
+
+        let hyprland_wayland = PlatformBackend::Hyprland
+            .create_idle_detector_with_sleep(None, Some(custom_timeout))
+            .expect("failed to create hyprland wayland idle detector");
+        assert_eq!(hyprland_wayland.idle_timeout(), Some(custom_timeout));
+
+        if let Some(wl) = orig_wl {
+            std::env::set_var("WAYLAND_DISPLAY", wl);
+        } else {
+            std::env::remove_var("WAYLAND_DISPLAY");
+        }
+        if let Some(xdg) = orig_xdg {
+            std::env::set_var("XDG_RUNTIME_DIR", xdg);
+        } else {
+            std::env::remove_var("XDG_RUNTIME_DIR");
+        }
 
         let x11_detector = PlatformBackend::X11
             .create_idle_detector_with_sleep(None, Some(custom_timeout))
