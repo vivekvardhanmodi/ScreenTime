@@ -39,7 +39,6 @@ The installation script performs the following tasks:
 3. Creates a Python virtual environment and installs backend dependencies.
 4. Compiles the React web dashboard into `web/dist`.
 5. Installs browser native messaging manifests for Chrome and Firefox.
-6. Installs and starts the systemd user service `screentimed.service` on supported Linux systems.
 
 ## Browser extension setup
 
@@ -72,27 +71,9 @@ Firefox uses a fixed extension ID, so no extra configuration script is required.
 The daemon manages window monitoring and database persistence.
 It prevents multiple instances by holding an exclusive lock on its IPC socket.
 
-### Service management with systemd
+### Running the daemon
 
-On Linux systems running systemd, manage the daemon as a user unit:
-
-```bash
-# Check service status
-systemctl --user status screentimed
-
-# Start the service
-systemctl --user start screentimed
-
-# Stop the service
-systemctl --user stop screentimed
-
-# View live systemd logs
-journalctl --user -u screentimed -f
-```
-
-### Manual execution
-
-You can also run the daemon directly from your shell:
+Run the daemon directly from your shell:
 
 ```bash
 # Start daemon in the background
@@ -103,6 +84,64 @@ screentimed status
 
 # Stop running daemon instances
 pkill -f screentimed
+```
+
+### Autostart configuration
+
+The installer does not configure autostart services.
+Configure autostart through your compositor or create an optional systemd user service.
+
+#### Compositor autostart
+
+Add `screentimed` to your compositor startup commands.
+
+For Hyprland, add this line to `~/.config/hypr/hyprland.conf`:
+
+```ini
+exec-once = screentimed
+```
+
+For Sway, add this line to `~/.config/sway/config`:
+
+```ini
+exec screentimed
+```
+
+#### Optional systemd user service
+
+To manage the daemon as a systemd user unit, create `~/.config/systemd/user/screentimed.service`:
+
+```ini
+[Unit]
+Description=ScreenTime Tracking Daemon
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/screentimed
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Reload the user daemon and start the service:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now screentimed
+```
+
+Manage the running unit with user commands:
+
+```bash
+# Check service status
+systemctl --user status screentimed
+
+# Stop the service
+systemctl --user stop screentimed
+
+# View live systemd logs
+journalctl --user -u screentimed -f
 ```
 
 ### CLI options
