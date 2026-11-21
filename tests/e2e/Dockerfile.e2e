@@ -1,0 +1,34 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LIBGL_ALWAYS_SOFTWARE=1
+ENV WLR_RENDERER=pixman
+
+# Install headless X11 and Wayland compositor packages + tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
+    openbox \
+    xdotool \
+    xterm \
+    sway \
+    xwayland \
+    foot \
+    sqlite3 \
+    python3 \
+    dbus \
+    dbus-x11 \
+    libsqlite3-0 \
+    ca-certificates \
+    curl \
+    procps \
+    libgl1-mesa-dri \
+    mesa-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up test user
+RUN useradd -m -s /bin/bash tester && \
+    mkdir -p /home/tester/.local/bin && \
+    chown -R tester:tester /home/tester
+
+WORKDIR /workspace
+USER tester

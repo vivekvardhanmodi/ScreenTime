@@ -3,8 +3,9 @@
 Coordinates window tracking, idle detection, and browser URL tracking
 to log activity sessions into the SQLite database.
 
+Deprecated: Use the native Rust daemon ('screentimed') instead.
 Run as: python -m screentime.daemon
-Or directly: screentimed
+Or directly: screentimed-legacy
 """
 
 import asyncio
@@ -14,6 +15,7 @@ import os
 import signal
 import sys
 import time
+import warnings
 from typing import Optional
 
 from screentime import (
@@ -399,8 +401,30 @@ def is_already_running() -> bool:
 
 # ── Main daemon loop ──────────────────────────────────────────────────
 
+_deprecation_warned = False
+
+
+def emit_deprecation_warning():
+    """Warn that the Python daemon is deprecated in favor of native screentimed (Rust)."""
+    global _deprecation_warned
+    if _deprecation_warned:
+        return
+    _deprecation_warned = True
+    warnings.warn(
+        "screentimed-legacy (Python daemon) is deprecated. "
+        "Please run the high-performance native 'screentimed' (Rust) binary instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    log.warning(
+        "DEPRECATION WARNING: screentimed-legacy (Python daemon) is deprecated. "
+        "Please run the high-performance native 'screentimed' (Rust) binary instead."
+    )
+
+
 async def run_daemon():
     """Main entry point for the daemon."""
+    emit_deprecation_warning()
     import screentime
     screentime.init_env()
 
@@ -514,7 +538,8 @@ async def run_daemon():
 
 
 def main():
-    """Entry point for screentime-daemon command."""
+    """Entry point for screentimed-legacy command."""
+    emit_deprecation_warning()
     import argparse
     parser = argparse.ArgumentParser(description="ScreenTime Daemon")
     parser.add_argument("--log-console", action="store_true", help="Log to console")

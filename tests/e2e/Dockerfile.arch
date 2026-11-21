@@ -1,0 +1,33 @@
+FROM archlinux:latest
+
+ENV LIBGL_ALWAYS_SOFTWARE=1
+ENV WLR_RENDERER=pixman
+ENV WLR_BACKENDS=headless
+ENV WLR_LIBINPUT_NO_DEVICES=1
+
+# Initialize pacman keys and install packages
+RUN pacman-key --init && \
+    pacman-key --populate archlinux && \
+    pacman -Syu --noconfirm && \
+    pacman -S --noconfirm \
+        xorg-server-xvfb \
+        openbox \
+        xdotool \
+        xterm \
+        sway \
+        xorg-xwayland \
+        foot \
+        sqlite \
+        python \
+        dbus \
+        mesa \
+        procps-ng \
+        diffutils \
+        which
+
+RUN useradd -m -s /bin/bash tester && \
+    mkdir -p /home/tester/.local/bin && \
+    chown -R tester:tester /home/tester
+
+WORKDIR /workspace
+USER tester

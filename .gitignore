@@ -1,3 +1,4 @@
+target/
 venv/
 __pycache__/
 *.pyc
@@ -18,3 +19,4 @@ audit_reports/
 designs/
 test_*.py
 build-firefox-xpi.sh
+.audit/
