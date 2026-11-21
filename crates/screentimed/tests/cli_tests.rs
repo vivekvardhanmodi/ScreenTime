@@ -278,7 +278,7 @@ async fn test_daemon_end_to_end_and_graceful_shutdown() {
     tokio::spawn(async move {
         while let Ok((mut stream, _)) = listener2.accept().await {
             tokio::spawn(async move {
-                let _ = stream.write_all(b"activewindow>>code,main.rs\n").await;
+                let _ = stream.write_all(b"activewindow>>firefox,Mozilla Firefox\n").await;
                 let mut buf = [0u8; 16];
                 let _ = stream.read(&mut buf).await;
             });
@@ -406,7 +406,7 @@ async fn test_daemon_end_to_end_and_graceful_shutdown() {
         )
         .unwrap();
 
-    assert_eq!(app_class, "code");
+    assert_eq!(app_class, "firefox");
     assert_eq!(website_url.as_deref(), Some("https://rust-lang.org"));
     assert_eq!(device_id, "cli-test-device");
 

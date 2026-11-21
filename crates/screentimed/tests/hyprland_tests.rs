@@ -386,7 +386,9 @@ async fn test_hyprland_tracker_and_idle_with_session_manager() {
         .with_poll_interval(Duration::from_millis(100))
         .with_retry_interval(Duration::from_millis(50));
 
-    let manager = SessionManager::new(db_handle.clone()).with_device_id("test-hyprland");
+    let manager = SessionManager::new(db_handle.clone())
+        .with_device_id("test-hyprland")
+        .with_min_duration(0.0);
     let (url_tx, url_rx) = mpsc::channel(16);
     let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 

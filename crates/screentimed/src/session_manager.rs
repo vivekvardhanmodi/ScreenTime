@@ -51,6 +51,7 @@ pub struct SessionManager {
     chrome_window_class: String,
     firefox_window_class: String,
     heartbeat_interval: Duration,
+    min_duration: f64,
 }
 
 impl SessionManager {
@@ -76,7 +77,13 @@ impl SessionManager {
             chrome_window_class: "google-chrome".to_string(),
             firefox_window_class: "firefox".to_string(),
             heartbeat_interval: Duration::from_secs(10),
+            min_duration: 1.0,
         }
+    }
+
+    pub fn with_min_duration(mut self, min_duration: f64) -> Self {
+        self.min_duration = min_duration;
+        self
     }
 
     pub fn with_device_id(mut self, device_id: impl Into<String>) -> Self {
@@ -254,7 +261,7 @@ impl SessionManager {
             SleepEvent::Sleep => {
                 self.is_sleeping = true;
                 if let Some(id) = self.current_session_id.take() {
-                    self.db.close_session(id, now, 1.0).await?;
+                    self.db.close_session(id, now, self.min_duration).await?;
                 }
                 self.current_start_time = 0.0;
                 self.current_url = None;
@@ -273,7 +280,7 @@ impl SessionManager {
                     self.resume_tracking_if_active(now).await?;
                 } else {
                     if let Some(id) = self.current_session_id.take() {
-                        self.db.close_session(id, now, 1.0).await?;
+                        self.db.close_session(id, now, self.min_duration).await?;
                     }
                     self.current_start_time = 0.0;
                     self.current_url = None;
@@ -304,7 +311,7 @@ impl SessionManager {
 
         let Some(win) = window else {
             if let Some(id) = self.current_session_id.take() {
-                self.db.close_session(id, now, 1.0).await?;
+                self.db.close_session(id, now, self.min_duration).await?;
             }
             self.current_window = None;
             self.current_effective_class = None;
@@ -325,7 +332,7 @@ impl SessionManager {
             .resolve_app_class(&win.app_class, Some(&win.title));
 
         if let Some(id) = self.current_session_id.take() {
-            self.db.close_session(id, now, 1.0).await?;
+            self.db.close_session(id, now, self.min_duration).await?;
         }
 
         self.current_window = Some(win.clone());
@@ -356,41 +363,22 @@ impl SessionManager {
     pub async fn handle_idle_change(&mut self, state: IdleState, now: f64) -> Result<(), DbError> {
         match state {
             IdleState::Idle => {
+                let was_idle = self.is_idle;
                 self.is_idle = true;
-                if let Some(id) = self.current_session_id.take() {
-                    self.db.close_session(id, now, 1.0).await?;
+                if !was_idle {
+                    if let Some(id) = self.current_session_id.take() {
+                        self.db.close_session(id, now, self.min_duration).await?;
+                    }
+                    self.current_start_time = 0.0;
+                    self.current_url = None;
+                    self.current_effective_class = None;
                 }
-                self.current_start_time = 0.0;
-                self.current_url = None;
-                self.current_effective_class = None;
             }
             IdleState::Active => {
+                let was_idle = self.is_idle;
                 self.is_idle = false;
-                if let Some(win) = self.current_window.clone() {
-                    let effective_class = self
-                        .title_rules
-                        .resolve_app_class(&win.app_class, Some(&win.title));
-
-                    self.current_effective_class = Some(effective_class.clone());
-                    self.current_start_time = now;
-
-                    let initial_url = if self.is_browser(&win.app_class) {
-                        self.last_known_browser_url.clone()
-                    } else {
-                        None
-                    };
-                    self.current_url = initial_url.clone();
-
-                    let mut session = Session::new(now, now, effective_class)
-                        .with_title(win.title)
-                        .with_device_id(self.device_id.clone());
-
-                    if let Some(u) = initial_url {
-                        session = session.with_url(u);
-                    }
-
-                    let new_id = self.db.insert_session(session).await?;
-                    self.current_session_id = Some(new_id);
+                if was_idle {
+                    self.resume_tracking_if_active(now).await?;
                 }
             }
         }
@@ -412,10 +400,20 @@ impl SessionManager {
             return Ok(());
         }
 
+        let win = self.current_window.as_ref().unwrap();
+        if !self.is_browser(&win.app_class) {
+            if let Some(url) = update.url {
+                self.last_known_browser_url = Some(url);
+            } else {
+                self.last_known_browser_url = None;
+            }
+            return Ok(());
+        }
+
         let Some(url) = update.url else {
             self.last_known_browser_url = None;
             if self.current_url.is_some() {
-                self.db.close_session(session_id, now, 1.0).await?;
+                self.db.close_session(session_id, now, self.min_duration).await?;
 
                 let win = self.current_window.as_ref().unwrap();
                 let effective_class = self
@@ -450,7 +448,7 @@ impl SessionManager {
                 .await?;
             self.current_url = Some(url);
         } else {
-            self.db.close_session(session_id, now, 1.0).await?;
+            self.db.close_session(session_id, now, self.min_duration).await?;
 
             let win = self.current_window.as_ref().unwrap();
             let effective_class = self
@@ -495,7 +493,7 @@ impl SessionManager {
         let sleep_threshold = (self.heartbeat_interval.as_secs_f64() * 3.0).max(30.0);
         if self.last_heartbeat > 0.0 && (now - self.last_heartbeat) > sleep_threshold {
             if let Some(id) = self.current_session_id.take() {
-                self.db.close_session(id, self.last_heartbeat, 1.0).await?;
+                self.db.close_session(id, self.last_heartbeat, self.min_duration).await?;
             }
 
             if let Some(win) = self.current_window.clone() {
@@ -523,7 +521,7 @@ impl SessionManager {
 
     pub async fn handle_shutdown(&mut self, now: f64) -> Result<(), DbError> {
         if let Some(id) = self.current_session_id.take() {
-            self.db.close_session(id, now, 1.0).await?;
+            self.db.close_session(id, now, self.min_duration).await?;
         }
         self.current_start_time = 0.0;
         self.current_url = None;
