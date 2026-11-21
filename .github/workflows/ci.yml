@@ -1,10 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [ "main", "port_daemon_rust_screentime", "swarm-*" ]
-  pull_request:
-    branches: [ "main", "port_daemon_rust_screentime" ]
   workflow_dispatch:
 
 concurrency:
