@@ -15,6 +15,7 @@ pub struct HyprlandIdleDetector {
     socket_dir: Option<PathBuf>,
     poll_interval: Duration,
     retry_interval: Duration,
+    idle_timeout: Option<Duration>,
     is_idle: Arc<AtomicBool>,
     stop_tx: Option<watch::Sender<bool>>,
     join_handle: Option<JoinHandle<()>>,
@@ -32,10 +33,20 @@ impl HyprlandIdleDetector {
             socket_dir: None,
             poll_interval: Duration::from_secs(2),
             retry_interval: Duration::from_secs(2),
+            idle_timeout: None,
             is_idle: Arc::new(AtomicBool::new(false)),
             stop_tx: None,
             join_handle: None,
         }
+    }
+
+    pub fn with_idle_timeout(mut self, timeout: Duration) -> Self {
+        self.idle_timeout = Some(timeout);
+        self
+    }
+
+    pub fn idle_timeout(&self) -> Option<Duration> {
+        self.idle_timeout
     }
 
     pub fn with_socket_dir(mut self, path: impl Into<PathBuf>) -> Self {
@@ -171,5 +182,9 @@ impl IdleDetector for HyprlandIdleDetector {
             let _ = handle.await;
         }
         Ok(())
+    }
+
+    fn idle_timeout(&self) -> Option<Duration> {
+        self.idle_timeout
     }
 }

@@ -353,4 +353,8 @@ impl IdleDetector for WindowsIdleDetector {
 
         Ok(())
     }
+
+    fn idle_timeout(&self) -> Option<Duration> {
+        Some(self.idle_threshold)
+    }
 }

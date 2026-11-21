@@ -2,6 +2,7 @@ use screentime_core::{IdleDetector, NoopIdleDetector, TrackerError, WindowTracke
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
+use std::time::Duration;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
@@ -153,21 +154,26 @@ impl PlatformBackend {
 
     /// Instantiate the IdleDetector for this platform backend.
     pub fn create_idle_detector(&self) -> Result<Box<dyn IdleDetector>, PlatformError> {
-        self.create_idle_detector_with_sleep(None)
+        self.create_idle_detector_with_sleep(None, None)
     }
 
-    /// Instantiate the IdleDetector for this platform backend with optional sleep event routing.
+    /// Instantiate the IdleDetector for this platform backend with optional sleep event routing and configured idle timeout.
     pub fn create_idle_detector_with_sleep(
         &self,
         #[allow(unused_variables)] sleep_tx: Option<
             tokio::sync::mpsc::Sender<crate::sleep::SleepEvent>,
         >,
+        #[allow(unused_variables)] idle_timeout: Option<Duration>,
     ) -> Result<Box<dyn IdleDetector>, PlatformError> {
         match self {
             #[cfg(target_os = "linux")]
             Self::Hyprland => {
                 info!("Initializing Hyprland idle detector");
-                Ok(Box::new(crate::hyprland::HyprlandIdleDetector::new()))
+                let mut detector = crate::hyprland::HyprlandIdleDetector::new();
+                if let Some(timeout) = idle_timeout {
+                    detector = detector.with_idle_timeout(timeout);
+                }
+                Ok(Box::new(detector))
             }
             #[cfg(target_os = "linux")]
             Self::Kde => {
@@ -177,13 +183,21 @@ impl PlatformBackend {
                     .unwrap_or(false)
                 {
                     info!("Initializing Wayland idle detector for KDE");
-                    Ok(Box::new(crate::wlroots::WaylandIdleDetector::new()))
+                    let mut detector = crate::wlroots::WaylandIdleDetector::new();
+                    if let Some(timeout) = idle_timeout {
+                        detector = detector.with_idle_timeout(timeout);
+                    }
+                    Ok(Box::new(detector))
                 } else if std::env::var("DISPLAY")
                     .map(|s| !s.is_empty())
                     .unwrap_or(false)
                 {
                     info!("Initializing X11 idle detector fallback for KDE");
-                    Ok(Box::new(crate::x11::X11IdleDetector::new()))
+                    let mut detector = crate::x11::X11IdleDetector::new();
+                    if let Some(timeout) = idle_timeout {
+                        detector = detector.with_idle_threshold(timeout);
+                    }
+                    Ok(Box::new(detector))
                 } else {
                     info!("Initializing no-op idle detector for KDE");
                     Ok(Box::new(NoopIdleDetector))
@@ -192,17 +206,29 @@ impl PlatformBackend {
             #[cfg(target_os = "linux")]
             Self::Wlroots => {
                 info!("Initializing Wayland idle detector (ext-idle-notify-v1)");
-                Ok(Box::new(crate::wlroots::WaylandIdleDetector::new()))
+                let mut detector = crate::wlroots::WaylandIdleDetector::new();
+                if let Some(timeout) = idle_timeout {
+                    detector = detector.with_idle_timeout(timeout);
+                }
+                Ok(Box::new(detector))
             }
             #[cfg(target_os = "linux")]
             Self::X11 => {
                 info!("Initializing X11 idle detector (screensaver / xss)");
-                Ok(Box::new(crate::x11::X11IdleDetector::new()))
+                let mut detector = crate::x11::X11IdleDetector::new();
+                if let Some(timeout) = idle_timeout {
+                    detector = detector.with_idle_threshold(timeout);
+                }
+                Ok(Box::new(detector))
             }
             #[cfg(target_os = "windows")]
             Self::Windows => {
                 info!("Initializing Windows idle detector");
-                let mut detector = crate::windows::WindowsIdleDetector::default();
+                let mut detector = if let Some(timeout) = idle_timeout {
+                    crate::windows::WindowsIdleDetector::new(timeout)
+                } else {
+                    crate::windows::WindowsIdleDetector::default()
+                };
                 if let Some(tx) = sleep_tx {
                     detector = detector.with_sleep_sender(tx);
                 }
@@ -304,5 +330,58 @@ mod tests {
         let env = HashMap::new();
         let res = PlatformBackend::auto_detect_from(&env, "linux");
         assert!(matches!(res, Err(PlatformError::NoSupportedDesktop)));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_create_idle_detector_with_non_default_timeout() {
+        let custom_timeout = Duration::from_secs(42);
+
+        let hyprland_detector = PlatformBackend::Hyprland
+            .create_idle_detector_with_sleep(None, Some(custom_timeout))
+            .expect("failed to create hyprland idle detector");
+        assert_eq!(hyprland_detector.idle_timeout(), Some(custom_timeout));
+
+        let x11_detector = PlatformBackend::X11
+            .create_idle_detector_with_sleep(None, Some(custom_timeout))
+            .expect("failed to create x11 idle detector");
+        assert_eq!(x11_detector.idle_timeout(), Some(custom_timeout));
+
+        let wlroots_detector = PlatformBackend::Wlroots
+            .create_idle_detector_with_sleep(None, Some(custom_timeout))
+            .expect("failed to create wlroots idle detector");
+        assert_eq!(wlroots_detector.idle_timeout(), Some(custom_timeout));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_create_idle_detector_default_timeout() {
+        let x11_detector = PlatformBackend::X11
+            .create_idle_detector()
+            .expect("failed to create x11 idle detector");
+        assert_eq!(x11_detector.idle_timeout(), Some(Duration::from_secs(120)));
+
+        let wlroots_detector = PlatformBackend::Wlroots
+            .create_idle_detector()
+            .expect("failed to create wlroots idle detector");
+        assert_eq!(
+            wlroots_detector.idle_timeout(),
+            Some(Duration::from_secs(180))
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_create_idle_detector_with_non_default_timeout_windows() {
+        let custom_timeout = Duration::from_secs(42);
+        let win_detector = PlatformBackend::Windows
+            .create_idle_detector_with_sleep(None, Some(custom_timeout))
+            .expect("failed to create windows idle detector");
+        assert_eq!(win_detector.idle_timeout(), Some(custom_timeout));
+
+        let win_default = PlatformBackend::Windows
+            .create_idle_detector()
+            .expect("failed to create windows idle detector");
+        assert_eq!(win_default.idle_timeout(), Some(Duration::from_secs(90)));
     }
 }

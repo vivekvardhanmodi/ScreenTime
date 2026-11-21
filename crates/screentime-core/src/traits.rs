@@ -1,5 +1,6 @@
 use crate::domain::{IdleState, WindowInfo};
 use async_trait::async_trait;
+use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
@@ -30,6 +31,11 @@ pub trait IdleDetector: Send + Sync {
     async fn start(&mut self, tx: mpsc::Sender<IdleState>) -> Result<(), TrackerError>;
     fn is_idle(&self) -> bool;
     async fn stop(&mut self) -> Result<(), TrackerError>;
+
+    /// Returns the configured idle timeout/threshold, if supported by the detector.
+    fn idle_timeout(&self) -> Option<Duration> {
+        None
+    }
 }
 
 #[async_trait]
@@ -59,6 +65,10 @@ impl<T: ?Sized + IdleDetector + Send + Sync> IdleDetector for Box<T> {
 
     async fn stop(&mut self) -> Result<(), TrackerError> {
         (**self).stop().await
+    }
+
+    fn idle_timeout(&self) -> Option<Duration> {
+        (**self).idle_timeout()
     }
 }
 

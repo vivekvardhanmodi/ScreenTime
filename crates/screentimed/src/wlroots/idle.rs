@@ -421,4 +421,8 @@ impl IdleDetector for WaylandIdleDetector {
         }
         Ok(())
     }
+
+    fn idle_timeout(&self) -> Option<Duration> {
+        Some(self.idle_timeout)
+    }
 }

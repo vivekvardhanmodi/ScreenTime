@@ -6,6 +6,7 @@ use interprocess::local_socket::traits::tokio::Stream as _;
 use screentime_core::ipc::{default_socket_path, socket_name_from_path, UrlUpdate};
 use screentime_core::DbActorHandle;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
@@ -470,14 +471,16 @@ pub async fn run_daemon(opts: RunOptions) -> i32 {
         }
     };
 
-    let idle_detector = match platform.create_idle_detector_with_sleep(Some(sleep_tx)) {
-        Ok(i) => i,
-        Err(e) => {
-            eprintln!("Failed to initialize idle detector: {e}");
-            ipc_handle.shutdown().await;
-            return 1;
-        }
-    };
+    let idle_timeout = Duration::from_secs(config.daemon.idle_timeout);
+    let idle_detector =
+        match platform.create_idle_detector_with_sleep(Some(sleep_tx), Some(idle_timeout)) {
+            Ok(i) => i,
+            Err(e) => {
+                eprintln!("Failed to initialize idle detector: {e}");
+                ipc_handle.shutdown().await;
+                return 1;
+            }
+        };
 
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 

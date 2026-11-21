@@ -221,6 +221,10 @@ impl IdleDetector for X11IdleDetector {
         }
         Ok(())
     }
+
+    fn idle_timeout(&self) -> Option<Duration> {
+        Some(self.idle_threshold)
+    }
 }
 
 fn run_idle_loop(
