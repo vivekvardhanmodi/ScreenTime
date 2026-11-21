@@ -214,7 +214,7 @@ pub fn spawn_win32_listener(event_tx: UnboundedSender<PlatformEvent>) -> Win32Li
                 UnhookWinEvent(hook);
             }
             WTSUnRegisterSessionNotification(hwnd);
-            if !power_notify.is_null() {
+            if power_notify != 0 {
                 UnregisterPowerSettingNotification(power_notify);
             }
             if !hwnd.is_null() {

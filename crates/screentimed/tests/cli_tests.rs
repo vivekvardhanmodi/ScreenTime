@@ -115,6 +115,8 @@ async fn test_cli_single_instance_enforcement() {
             "--db",
             db_path.to_str().unwrap(),
         ])
+        .env("HYPRLAND_INSTANCE_SIGNATURE", "ci_mock_instance")
+        .env("XDG_RUNTIME_DIR", temp.path().to_str().unwrap())
         .output()
         .expect("Execute second daemon instance");
 
