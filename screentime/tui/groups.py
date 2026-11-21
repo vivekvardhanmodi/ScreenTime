@@ -16,6 +16,7 @@ from textual.widgets import (
     OptionList,
     Static,
 )
+from textual.css.query import NoMatches
 from textual.widgets.option_list import Option
 
 from screentime.database import Database
@@ -127,7 +128,7 @@ class AddToGroupModal(ModalScreen[str | None]):
                     if idx is not None and 0 <= idx < len(self.existing_groups):
                         self.dismiss(self.existing_groups[idx])
                         return
-                except Exception:
+                except NoMatches:
                     pass
 
             self.dismiss(None)
@@ -264,12 +265,12 @@ class GroupsPane(Widget):
         if left:
             try:
                 self.query_one("#groups-option-list", OptionList)
-            except Exception:
+            except NoMatches:
                 left[0].mount(self._build_group_list(), before=0)
         if right:
             try:
                 self.query_one("#apps-group-list", OptionList)
-            except Exception:
+            except NoMatches:
                 right[0].mount(self._build_app_list())
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -329,7 +330,7 @@ class GroupsPane(Widget):
     def _delete_selected_group(self):
         try:
             group_list = self.query_one("#groups-option-list", OptionList)
-        except Exception:
+        except NoMatches:
             return
 
         idx = group_list.highlighted
