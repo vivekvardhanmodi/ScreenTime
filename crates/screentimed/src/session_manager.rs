@@ -413,7 +413,9 @@ impl SessionManager {
         let Some(url) = update.url else {
             self.last_known_browser_url = None;
             if self.current_url.is_some() {
-                self.db.close_session(session_id, now, self.min_duration).await?;
+                self.db
+                    .close_session(session_id, now, self.min_duration)
+                    .await?;
 
                 let win = self.current_window.as_ref().unwrap();
                 let effective_class = self
@@ -448,7 +450,9 @@ impl SessionManager {
                 .await?;
             self.current_url = Some(url);
         } else {
-            self.db.close_session(session_id, now, self.min_duration).await?;
+            self.db
+                .close_session(session_id, now, self.min_duration)
+                .await?;
 
             let win = self.current_window.as_ref().unwrap();
             let effective_class = self
@@ -493,7 +497,9 @@ impl SessionManager {
         let sleep_threshold = (self.heartbeat_interval.as_secs_f64() * 3.0).max(30.0);
         if self.last_heartbeat > 0.0 && (now - self.last_heartbeat) > sleep_threshold {
             if let Some(id) = self.current_session_id.take() {
-                self.db.close_session(id, self.last_heartbeat, self.min_duration).await?;
+                self.db
+                    .close_session(id, self.last_heartbeat, self.min_duration)
+                    .await?;
             }
 
             if let Some(win) = self.current_window.clone() {
