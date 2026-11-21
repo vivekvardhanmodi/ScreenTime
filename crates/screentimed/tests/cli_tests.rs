@@ -345,7 +345,7 @@ async fn test_daemon_end_to_end_and_graceful_shutdown() {
     client.shutdown().await.unwrap();
 
     // Give daemon a moment to accumulate duration >= 1.0s so noise filter doesn't discard it
-    tokio::time::sleep(Duration::from_millis(1150)).await;
+    tokio::time::sleep(Duration::from_millis(2000)).await;
 
     // Send SIGTERM to child process for graceful shutdown
     #[cfg(unix)]
