@@ -70,7 +70,7 @@ impl Win32NamedMutex {
 
         let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
         let handle = unsafe { CreateMutexW(std::ptr::null(), 1, wide.as_ptr()) };
-        if handle == 0 || handle == INVALID_HANDLE_VALUE {
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
             return Err(IpcServerError::Io(io::Error::last_os_error()));
         }
         if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
@@ -84,7 +84,8 @@ impl Win32NamedMutex {
 #[cfg(windows)]
 impl Drop for Win32NamedMutex {
     fn drop(&mut self) {
-        if self.handle != 0 {
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        if !self.handle.is_null() && self.handle != INVALID_HANDLE_VALUE {
             unsafe { windows_sys::Win32::Foundation::CloseHandle(self.handle) };
         }
     }
@@ -114,7 +115,7 @@ impl IpcServer {
 
     pub async fn start(
         name: Name<'static>,
-        socket_path: Option<PathBuf>,
+        #[allow(unused_variables)] socket_path: Option<PathBuf>,
         url_tx: mpsc::Sender<UrlUpdate>,
     ) -> Result<IpcServerHandle, IpcServerError> {
         #[cfg(windows)]

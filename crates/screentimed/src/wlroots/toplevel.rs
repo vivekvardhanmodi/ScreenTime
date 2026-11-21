@@ -47,8 +47,10 @@ impl ToplevelData {
 /// Parses the Wayland state byte array and returns true if State::Activated is present.
 pub fn parse_state_activated(state_bytes: &[u8]) -> bool {
     state_bytes
-        .chunks_exact(4)
-        .map(|c| u32::from_ne_bytes(c.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| u32::from_ne_bytes(*c))
         .any(|val| val == State::Activated as u32)
 }
 

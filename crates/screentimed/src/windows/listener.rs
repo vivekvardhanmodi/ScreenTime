@@ -41,10 +41,15 @@ const WM_QUIT: u32 = 0x0012;
 
 static GLOBAL_TX: Mutex<Option<UnboundedSender<PlatformEvent>>> = Mutex::new(None);
 
+#[inline]
+fn guid_eq(a: &windows_sys::core::GUID, b: &windows_sys::core::GUID) -> bool {
+    a.data1 == b.data1 && a.data2 == b.data2 && a.data3 == b.data3 && a.data4 == b.data4
+}
+
 unsafe extern "system" fn win_event_proc(
-    _hook: isize,
+    _hook: *mut std::ffi::c_void,
     event: u32,
-    hwnd: isize,
+    hwnd: HWND,
     _id_object: i32,
     _id_child: i32,
     _event_thread: u32,
@@ -59,12 +64,12 @@ unsafe extern "system" fn win_event_proc(
         return;
     };
 
-    if hwnd == 0 {
+    if hwnd.is_null() {
         let _ = tx.send(PlatformEvent::WindowChanged(None));
         return;
     }
 
-    let (real_hwnd, real_pid) = resolve_real_process_for_hwnd(hwnd);
+    let (real_hwnd, _real_pid) = resolve_real_process_for_hwnd(hwnd);
     let title = get_window_title(real_hwnd);
     let app_class = match get_process_path_and_name(real_hwnd) {
         Ok((_, _, name)) => name,
@@ -86,8 +91,8 @@ unsafe extern "system" fn wnd_proc(
         WM_POWERBROADCAST => {
             if wparam == PBT_POWERSETTINGCHANGE && lparam != 0 {
                 let setting = &*(lparam as *const POWERBROADCAST_SETTING);
-                if setting.PowerSetting == GUID_CONSOLE_DISPLAY_STATE {
-                    let state = setting.Data as u32;
+                if guid_eq(&setting.PowerSetting, &GUID_CONSOLE_DISPLAY_STATE) {
+                    let state = *(setting.Data.as_ptr() as *const u32);
                     if let Some(event) = parse_display_power_state(state) {
                         if let Ok(guard) = GLOBAL_TX.lock() {
                             if let Some(ref tx) = *guard {
@@ -158,12 +163,12 @@ pub fn spawn_win32_listener(event_tx: UnboundedSender<PlatformEvent>) -> Win32Li
                 cbClsExtra: 0,
                 cbWndExtra: 0,
                 hInstance: h_instance,
-                hIcon: 0,
-                hCursor: 0,
-                hbrBackground: 0,
+                hIcon: std::ptr::null_mut(),
+                hCursor: std::ptr::null_mut(),
+                hbrBackground: std::ptr::null_mut(),
                 lpszMenuName: std::ptr::null(),
                 lpszClassName: class_name,
-                hIconSm: 0,
+                hIconSm: std::ptr::null_mut(),
             };
             RegisterClassExW(&wnd_class);
 
@@ -177,7 +182,7 @@ pub fn spawn_win32_listener(event_tx: UnboundedSender<PlatformEvent>) -> Win32Li
                 0,
                 0,
                 HWND_MESSAGE,
-                0,
+                std::ptr::null_mut(),
                 h_instance,
                 std::ptr::null(),
             );
@@ -192,7 +197,7 @@ pub fn spawn_win32_listener(event_tx: UnboundedSender<PlatformEvent>) -> Win32Li
             let hook = SetWinEventHook(
                 EVENT_SYSTEM_FOREGROUND,
                 EVENT_SYSTEM_FOREGROUND,
-                0,
+                std::ptr::null_mut(),
                 Some(win_event_proc),
                 0,
                 0,
@@ -200,19 +205,19 @@ pub fn spawn_win32_listener(event_tx: UnboundedSender<PlatformEvent>) -> Win32Li
             );
 
             let mut msg: MSG = std::mem::zeroed();
-            while GetMessageW(&mut msg, 0, 0, 0) > 0 {
+            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
 
-            if hook != 0 {
+            if !hook.is_null() {
                 UnhookWinEvent(hook);
             }
             WTSUnRegisterSessionNotification(hwnd);
-            if power_notify != 0 {
+            if !power_notify.is_null() {
                 UnregisterPowerSettingNotification(power_notify);
             }
-            if hwnd != 0 {
+            if !hwnd.is_null() {
                 DestroyWindow(hwnd);
             }
 

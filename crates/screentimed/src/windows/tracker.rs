@@ -134,7 +134,7 @@ impl WindowTracker for WindowsTracker {
         {
             let fg_hwnd =
                 unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
-            if fg_hwnd == 0 {
+            if fg_hwnd.is_null() {
                 return Ok(None);
             }
 

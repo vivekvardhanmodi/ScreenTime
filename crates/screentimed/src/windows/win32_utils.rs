@@ -23,12 +23,12 @@ extern "system" {
     pub fn SetWinEventHook(
         eventmin: u32,
         eventmax: u32,
-        hmodwineventproc: isize,
+        hmodwineventproc: *mut std::ffi::c_void,
         pfnwineventproc: Option<
             unsafe extern "system" fn(
-                hwineventhook: isize,
+                hwineventhook: *mut std::ffi::c_void,
                 event: u32,
-                hwnd: isize,
+                hwnd: HWND,
                 idobject: i32,
                 idchild: i32,
                 ideventthread: u32,
@@ -38,9 +38,9 @@ extern "system" {
         idprocess: u32,
         idthread: u32,
         dwflags: u32,
-    ) -> isize;
+    ) -> *mut std::ffi::c_void;
 
-    pub fn UnhookWinEvent(hwineventhook: isize) -> i32;
+    pub fn UnhookWinEvent(hwineventhook: *mut std::ffi::c_void) -> i32;
 
     pub fn GetLastInputInfo(plii: *mut LASTINPUTINFO) -> i32;
 }
@@ -84,7 +84,7 @@ pub fn get_process_path_and_name(hwnd: HWND) -> Result<(u32, String, String), St
     }
 
     let h_process: HANDLE = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-    if h_process == 0 {
+    if h_process.is_null() {
         return Err(format!("OpenProcess failed with error {}", unsafe {
             GetLastError()
         }));

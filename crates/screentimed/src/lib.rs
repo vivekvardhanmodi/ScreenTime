@@ -1,6 +1,5 @@
 pub mod cli;
 pub mod config;
-pub mod hyprland;
 pub mod ipc;
 pub mod logging;
 pub mod manifests;
@@ -8,6 +7,8 @@ pub mod platform;
 pub mod session_manager;
 pub mod sleep;
 
+#[cfg(target_os = "linux")]
+pub mod hyprland;
 #[cfg(target_os = "linux")]
 pub mod kde;
 #[cfg(target_os = "linux")]
@@ -27,7 +28,6 @@ pub use config::{
     default_config_path, default_data_dir, Config, DaemonConfig, EnvLookup, IniDocument,
     LoggingConfig, PathsConfig, SystemEnv,
 };
-pub use hyprland::{HyprlandIdleDetector, HyprlandWindowTracker};
 pub use ipc::{IpcServer, IpcServerError, IpcServerHandle};
 pub use logging::{backup_path, init_logging, strip_ansi, RollingFileWriter, ScreenTimeLogWriter};
 pub use manifests::{
@@ -41,6 +41,8 @@ pub use platform::{PlatformBackend, PlatformError};
 pub use session_manager::{current_time, is_browser_app, SessionManager};
 pub use sleep::{has_external_display, has_external_display_in, is_internal_connector, SleepEvent};
 
+#[cfg(target_os = "linux")]
+pub use hyprland::{HyprlandIdleDetector, HyprlandWindowTracker};
 #[cfg(target_os = "linux")]
 pub use sleep::LogindSleepListener;
 
