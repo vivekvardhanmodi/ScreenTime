@@ -37,6 +37,7 @@ export default function CategoryList({ categories, onDelete }) {
                     className="icon-btn"
                     onClick={() => onDelete(name)}
                     title="Remove Mapping"
+                    aria-label={`Remove mapping for ${name}`}
                     style={{ margin: '0 auto' }}
                   >
                     <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>delete</span>

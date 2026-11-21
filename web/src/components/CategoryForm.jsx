@@ -23,8 +23,9 @@ export default function CategoryForm({ identifiers, existingCategories, onAdd })
       <h2 className="card-title">Add Mapping</h2>
       <form onSubmit={handleSubmit} className="flex-col gap-stack-md mt-4">
         <div>
-          <label className="form-label">APP CLASS OR DOMAIN</label>
+          <label htmlFor="app-class-domain-input" className="form-label">APP CLASS OR DOMAIN</label>
           <input
+            id="app-class-domain-input"
             type="text"
             className="input-dark"
             list="category-identifier-list"
@@ -39,8 +40,9 @@ export default function CategoryForm({ identifiers, existingCategories, onAdd })
           </datalist>
         </div>
         <div>
-          <label className="form-label">CATEGORY</label>
+          <label htmlFor="category-input" className="form-label">CATEGORY</label>
           <input
+            id="category-input"
             type="text"
             className="input-dark"
             list="category-list"

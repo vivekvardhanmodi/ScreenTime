@@ -17,8 +17,9 @@ export default function RuleForm({ onAdd }) {
       <h2 className="card-title">Add Rule</h2>
       <form onSubmit={handleSubmit} className="flex-col gap-stack-md mt-4">
         <div>
-          <label className="form-label">TERMINAL APP CLASS</label>
+          <label htmlFor="app-class-input" className="form-label">TERMINAL APP CLASS</label>
           <input
+            id="app-class-input"
             type="text"
             className="input-dark"
             placeholder="e.g. kitty"
@@ -27,8 +28,9 @@ export default function RuleForm({ onAdd }) {
           />
         </div>
         <div>
-          <label className="form-label">TARGET TITLE (PREFIX)</label>
+          <label htmlFor="target-title-input" className="form-label">TARGET TITLE (PREFIX)</label>
           <input
+            id="target-title-input"
             type="text"
             className="input-dark"
             placeholder="e.g. nvim"

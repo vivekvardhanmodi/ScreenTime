@@ -12,6 +12,7 @@ export default function RuleItem({ rule, onDelete }) {
           className="icon-btn"
           onClick={() => onDelete(rule.app_class, rule.target_title)}
           title="Remove Rule"
+          aria-label={`Remove rule for ${rule.app_class}`}
           style={{ margin: '0 auto' }}
         >
           <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>delete</span>

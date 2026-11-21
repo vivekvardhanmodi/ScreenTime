@@ -125,15 +125,15 @@ export default function HistoryPage() {
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: '16px', flexWrap: 'wrap' }}>
           <DeviceSelector devices={availableDevices} selectedDevice={device} onChange={setDevice} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <span className="form-label" style={{ marginBottom: 0 }}>START DATE</span>
+            <label htmlFor="start-date" className="form-label" style={{ marginBottom: 0 }}>START DATE</label>
             <div className="date-input-wrapper">
-              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+              <input id="start-date" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
             </div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <span className="form-label" style={{ marginBottom: 0 }}>END DATE</span>
+            <label htmlFor="end-date" className="form-label" style={{ marginBottom: 0 }}>END DATE</label>
             <div className="date-input-wrapper">
-              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
+              <input id="end-date" type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
             </div>
           </div>
         </div>
