@@ -1,7 +1,7 @@
 use screentime_browser_host::{resolve_socket_name, run_host};
 use std::io;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> io::Result<()> {
     tracing_subscriber::fmt().with_writer(io::stderr).init();
 
