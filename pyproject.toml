@@ -11,12 +11,11 @@ dependencies = [
     "textual>=0.40.0",
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",
-    "pywayland>=0.4.17",
 ]
 
 [project.scripts]
 screentime = "screentime.tui.app:main"
-screentimed = "screentime.daemon:main"
+screentimed-legacy = "screentime.daemon:main"
 screentime-web = "screentime.api:main"
 
 [tool.setuptools.packages.find]

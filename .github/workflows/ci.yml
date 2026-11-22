@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # =========================================================================
+  # TIER 1: Protocol E2E Testing, Static Analysis & Workspace Unit Tests
+  # =========================================================================
+
+  cargo-checks:
+    name: "Tier 1: Rust Formatting, Clippy & Unit Tests"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check code formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy linter
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run workspace unit and integration tests
+        run: cargo test --workspace --verbose
+
+  e2e-wayland:
+    name: "Tier 1: Wayland E2E Protocol Test (Sway Headless)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Sway, Xwayland, and test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sway xwayland foot xterm sqlite3 python3-tk
+
+      - name: Build workspace binaries
+        run: cargo build --workspace
+
+      - name: Execute headless Wayland E2E harness
+        run: ./tests/e2e/test_wayland_sway.sh
+
+  e2e-x11:
+    name: "Tier 1: X11 E2E Protocol Test (Xvfb + Openbox)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Xvfb, Openbox, xdotool, and test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb openbox xdotool xterm sqlite3 python3-tk
+
+      - name: Build workspace binaries
+        run: cargo build --workspace
+
+      - name: Execute headless X11 E2E harness
+        run: ./tests/e2e/test_x11_openbox.sh
+
+  e2e-windows:
+    name: "Tier 1: Windows Desktop Win32 E2E Test"
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build workspace binaries
+        run: cargo build --workspace
+
+      - name: Execute Windows Win32 E2E harness
+        shell: pwsh
+        run: ./tests/e2e/test_windows_win32.ps1
+
+  # =========================================================================
+  # TIER 2: Multi-Distro Packaging & Installer Smoke Tests
+  # =========================================================================
+
+  multi-distro-packaging:
+    name: "Tier 2: Packaging Smoke Test (${{ matrix.distro.name }})"
+    runs-on: ubuntu-latest
+    needs: [cargo-checks, e2e-wayland, e2e-x11, e2e-windows]
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - name: 'Arch Linux'
+            image: 'archlinux:latest'
+            setup: 'pacman -Syu --noconfirm base-devel git rust python python-pip'
+          - name: 'Fedora'
+            image: 'fedora:latest'
+            setup: 'dnf install -y git gcc rust cargo python3 python3-pip python3-devel'
+          - name: 'Ubuntu'
+            image: 'ubuntu:24.04'
+            setup: 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git gcc curl python3 python3-pip python3-venv && curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal && export PATH=\$HOME/.cargo/bin:\$PATH'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run container packaging smoke test
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src:ro" \
+            ${{ matrix.distro.image }} \
+            bash -c "
+              set -euo pipefail
+              echo '=== Installing distribution prerequisites ==='
+              ${{ matrix.distro.setup }}
+              
+              echo '=== Setting up isolated build environment ==='
+              cp -r /src /build
+              cd /build
+              
+              echo '=== Executing install.sh ==='
+              chmod +x ./install.sh
+              ./install.sh
+              
+              echo '=== Validating installed binaries and manifests ==='
+              export PATH=\"\$HOME/.local/bin:\$PATH\"
+              
+              screentimed version
+              screentimed --help
+              
+              test -f \"\$HOME/.local/bin/screentimed\"
+              test -f \"\$HOME/.local/bin/screentime-browser-host\"
+              test -f \"\$HOME/.local/bin/screentime\"
+              test -f \"\$HOME/.local/bin/screentime-web\"
+              test -f \"\$HOME/.config/google-chrome/NativeMessagingHosts/com.screentime.native.json\"
+              test -f \"\$HOME/.mozilla/native-messaging-hosts/com.screentime.native.json\"
+              
+              echo 'Smoke verification passed for ${{ matrix.distro.name }}!'
+            "

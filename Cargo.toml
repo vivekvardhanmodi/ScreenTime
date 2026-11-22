@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/screentime-core",
+    "crates/screentimed",
+    "crates/screentime-browser-host",
+]
+resolver = "2"

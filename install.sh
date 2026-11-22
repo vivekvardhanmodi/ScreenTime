@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
 # ScreenTime Installation Script
-# Sets up venv, dependencies, and Chrome native messaging host.
+# Sets up Rust release binaries, Python virtual environment, and browser native messaging hosts.
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/venv"
-NATIVE_HOST_NAME="com.screentime.native"
+BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 
 # Colors
 RED='\033[0;31m'
@@ -30,69 +30,59 @@ echo "  ║    App Usage Tracker for Linux    ║"
 echo "  ╚═══════════════════════════════════╝"
 echo -e "${NC}"
 
-# ── Check & Install System Dependencies ───────────────────────────────
+# ── Check System Prerequisites ────────────────────────────────────────
 
 info "Checking system prerequisites..."
 
-# 1. Determine if we need 'sudo' (Non-Root on laptop vs Root inside Docker)
-SUDO=""
-if [[ $EUID -ne 0 ]]; then
-    if command -v sudo &>/dev/null; then
-        SUDO="sudo"
-    else
-        error "This script requires root privileges or 'sudo' to install missing dependencies."
-        exit 1
-    fi
-fi
-
-# 2. Check for python3
-if ! command -v python3 &>/dev/null; then
-    error "python3 is not installed. Install it: sudo pacman -S python"
+if ! command -v cargo &>/dev/null; then
+    error "cargo is not installed. Install Rust: https://rustup.rs/ or via your package manager."
     exit 1
 fi
 
-# 3. Check for Wayland development headers (required to compile pywayland)
-if [[ ! -f "/usr/share/wayland/wayland.xml" ]]; then
-    warn "Wayland protocol headers (/usr/share/wayland/wayland.xml) not found."
-
-    if command -v pacman &>/dev/null; then
-        info "Installing wayland and wayland-protocols via pacman..."
-        $SUDO pacman -S --needed --noconfirm wayland wayland-protocols base-devel
-    elif command -v apt-get &>/dev/null; then
-        info "Installing libwayland-dev and wayland-protocols via apt..."
-        $SUDO apt-get update
-        $SUDO apt-get install -y libwayland-dev wayland-protocols python3-dev pkg-config build-essential
-    elif command -v dnf &>/dev/null; then
-        info "Installing wayland-devel and wayland-protocols-devel via dnf..."
-        $SUDO dnf install -y wayland-devel wayland-protocols-devel python3-devel
-    elif command -v zypper &>/dev/null; then
-        info "Installing wayland-devel and wayland-protocols-devel via zypper..."
-        $SUDO zypper install -y wayland-devel wayland-protocols-devel python3-devel pkgconf
-    else
-        error "Supported package manager (pacman/apt/dnf/zypper) not found. Please install wayland protocols manually."
-        exit 1
-    fi
-
-    # Double check that the file now exists
-    if [[ ! -f "/usr/share/wayland/wayland.xml" ]]; then
-        error "Failed to locate /usr/share/wayland/wayland.xml even after running pacman."
-        exit 1
-    fi
-    ok "Wayland development packages installed successfully."
-fi
-
-# 4. Warnings for optional tools
-if ! command -v hyprctl &>/dev/null; then
-    warn "hyprctl not found — Hyprland may not be running or installed."
+if ! command -v python3 &>/dev/null; then
+    error "python3 is not installed. Install it via your package manager (e.g. sudo pacman -S python)."
+    exit 1
 fi
 
 if ! command -v npm &>/dev/null; then
-    warn "npm not found. Node.js & npm are recommended to build the Web App (sudo pacman -S nodejs npm)."
+    warn "npm not found. Node.js & npm are recommended to build the Web App (e.g. sudo pacman -S nodejs npm)."
 fi
 
 ok "Prerequisites checked successfully."
 
-# ── Create virtual environment ────────────────────────────────────────
+# ── Build Rust Release Binaries ───────────────────────────────────────
+
+info "Building Rust release binaries (cargo build --release)..."
+(cd "$SCRIPT_DIR" && cargo build --release)
+
+if [[ ! -f "$SCRIPT_DIR/target/release/screentimed" || ! -f "$SCRIPT_DIR/target/release/screentime-browser-host" ]]; then
+    error "Rust binaries were not found in target/release after build."
+    exit 1
+fi
+ok "Rust release binaries built successfully."
+
+# ── Install Rust Binaries to ~/.local/bin ─────────────────────────────
+
+info "Installing Rust binaries to $BIN_DIR..."
+mkdir -p "$BIN_DIR"
+ln -sf "$SCRIPT_DIR/target/release/screentimed" "$BIN_DIR/screentimed"
+ln -sf "$SCRIPT_DIR/target/release/screentime-browser-host" "$BIN_DIR/screentime-browser-host"
+ok "Rust binaries installed in $BIN_DIR"
+
+# ── Set Up Native Messaging Host Manifests ────────────────────────────
+
+info "Configuring browser native messaging manifests..."
+MANIFEST_ARGS=(--host-path "$BIN_DIR/screentime-browser-host")
+if [[ -n "${CHROME_NMH_DIR:-}" ]]; then
+    MANIFEST_ARGS+=(--chrome-dir "$CHROME_NMH_DIR")
+fi
+if [[ -n "${FIREFOX_NMH_DIR:-}" ]]; then
+    MANIFEST_ARGS+=(--firefox-dir "$FIREFOX_NMH_DIR")
+fi
+"$BIN_DIR/screentimed" install-manifests "${MANIFEST_ARGS[@]}"
+ok "Browser native messaging manifests configured."
+
+# ── Setup Python Virtual Environment ──────────────────────────────────
 
 info "Setting up Python virtual environment..."
 
@@ -105,94 +95,34 @@ fi
 
 source "$VENV_DIR/bin/activate"
 
-info "Installing Python dependencies..."
-# openSUSE puts Wayland headers in a subdirectory; help pywayland find them
-if [[ -f "/usr/include/wayland/wayland-client-core.h" ]]; then
-    export CFLAGS="-I/usr/include/wayland ${CFLAGS:-}"
-fi
+info "Installing Python dependencies for TUI and Web API..."
 pip install --upgrade pip -q
 pip install -e "$SCRIPT_DIR" -q
-ok "Dependencies installed"
+rm -f "$VENV_DIR/bin/screentimed"
+ok "Python dependencies installed."
+
+info "Installing Python CLI symlinks to $BIN_DIR..."
+ln -sf "$VENV_DIR/bin/screentime" "$BIN_DIR/screentime"
+ln -sf "$VENV_DIR/bin/screentime-web" "$BIN_DIR/screentime-web"
+ok "Python CLI symlinks created in $BIN_DIR"
 
 # ── Build Web App Frontend ───────────────────────────────────────────
 
 info "Building Web App frontend..."
 if command -v npm &>/dev/null; then
     (cd "$SCRIPT_DIR/web" && npm install --silent && npm run build)
-    ok "Web App frontend built"
+    ok "Web App frontend built."
 else
     warn "Skipping Web App build because npm is not installed. Run 'cd web && npm install && npm run build' after installing npm."
 fi
 
-# ── Create data directory ─────────────────────────────────────────────
+# ── Create Data Directory ─────────────────────────────────────────────
 
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/screentime"
 mkdir -p "$DATA_DIR"
 ok "Data directory: $DATA_DIR"
 
-# ── Set up native messaging host ──────────────────────────────────────
-
-info "Setting up native messaging host..."
-
-chmod +x "$SCRIPT_DIR/screentime/browser_host.py"
-
-# ── Chrome ──
-CHROME_NMH_DIR="$HOME/.config/google-chrome/NativeMessagingHosts"
-mkdir -p "$CHROME_NMH_DIR"
-CHROME_MANIFEST="$CHROME_NMH_DIR/$NATIVE_HOST_NAME.json"
-
-CURRENT_EXT_ID="EXTENSION_ID_PLACEHOLDER"
-if [[ -f "$CHROME_MANIFEST" ]]; then
-    # Extract existing ID to avoid overwriting a configured setup
-    EXISTING_ID=$(grep -o 'chrome-extension://[^/]*' "$CHROME_MANIFEST" | sed 's/chrome-extension:\/\///' || true)
-    if [[ -n "$EXISTING_ID" && "$EXISTING_ID" != "EXTENSION_ID_PLACEHOLDER" ]]; then
-        CURRENT_EXT_ID="$EXISTING_ID"
-        info "Preserving existing Chrome extension ID: $CURRENT_EXT_ID"
-    fi
-fi
-
-cat > "$CHROME_MANIFEST" << EOF
-{
-  "name": "$NATIVE_HOST_NAME",
-  "description": "ScreenTime browser URL tracker",
-  "path": "$SCRIPT_DIR/screentime/browser_host.py",
-  "type": "stdio",
-  "allowed_origins": [
-    "chrome-extension://$CURRENT_EXT_ID/"
-  ]
-}
-EOF
-
-ok "Chrome native messaging host installed"
-
-# ── Firefox ──
-FIREFOX_NMH_DIR="$HOME/.mozilla/native-messaging-hosts"
-mkdir -p "$FIREFOX_NMH_DIR"
-
-cat > "$FIREFOX_NMH_DIR/$NATIVE_HOST_NAME.json" << EOF
-{
-  "name": "$NATIVE_HOST_NAME",
-  "description": "ScreenTime browser URL tracker",
-  "path": "$SCRIPT_DIR/screentime/browser_host.py",
-  "type": "stdio",
-  "allowed_extensions": [
-    "screentime@screentime.local"
-  ]
-}
-EOF
-
-ok "Firefox native messaging host installed"
-
-# ── Create symlinks in ~/.local/bin ──────────────────────────────────
-
-info "Creating symlinks in ~/.local/bin..."
-mkdir -p "$HOME/.local/bin"
-ln -sf "$VENV_DIR/bin/screentime" "$HOME/.local/bin/screentime"
-ln -sf "$VENV_DIR/bin/screentimed" "$HOME/.local/bin/screentimed"
-ln -sf "$VENV_DIR/bin/screentime-web" "$HOME/.local/bin/screentime-web"
-ok "Symlinks created in ~/.local/bin"
-
-# ── Print next steps ──────────────────────────────────────────────────
+# ── Print Next Steps ──────────────────────────────────────────────────
 
 echo ""
 echo -e "${PURPLE}═══════════════════════════════════════════════════${NC}"
@@ -209,25 +139,25 @@ echo "     • Select: $SCRIPT_DIR/chrome_extension/"
 echo "     • Copy the extension ID shown"
 echo ""
 echo -e "  ${YELLOW}2. Update the native messaging host with your extension ID:${NC}"
-echo "     Run this command (replace YOUR_EXTENSION_ID):"
-echo ""
-echo -e "     ${GREEN}sed -i 's/EXTENSION_ID_PLACEHOLDER/YOUR_EXTENSION_ID/' \\"
-echo -e "       $CHROME_NMH_DIR/$NATIVE_HOST_NAME.json${NC}"
+echo "     Run:"
+echo -e "     ${GREEN}./set-extension-id.sh YOUR_EXTENSION_ID${NC}"
+echo "     (or: screentimed install-manifests --extension-id YOUR_EXTENSION_ID)"
 echo ""
 echo -e "  ${YELLOW}3. Start the daemon:${NC}"
-echo -e "     ${GREEN}screentimed &${NC} (or $VENV_DIR/bin/screentimed &)"
+echo -e "     ${GREEN}screentimed &${NC}"
 echo ""
 echo -e "  ${YELLOW}4. Launch the TUI:${NC}"
-echo -e "     ${GREEN}screentime${NC} (or $VENV_DIR/bin/screentime)"
+echo -e "     ${GREEN}screentime${NC}"
 echo ""
 echo -e "  ${YELLOW}5. Launch the Web App:${NC}"
-echo -e "     ${GREEN}screentime-web${NC} (or $VENV_DIR/bin/screentime-web)"
+echo -e "     ${GREEN}screentime-web${NC}"
 echo ""
 echo -e "  ${YELLOW}6. Auto-start on login:${NC}"
-echo "     Add this to your hyprland.conf:"
-echo -e "     ${GREEN}exec-once = screentimed${NC} (or exec-once = $VENV_DIR/bin/screentimed)"
+echo "     Add this to your hyprland.conf (or desktop autostart):"
+echo -e "     ${GREEN}exec-once = screentimed${NC}"
 echo ""
 echo -e "${BLUE}Useful commands:${NC}"
-echo "  Logs:  tail -f $DATA_DIR/logs/daemon.log"
-echo "  Stop:  pkill -f screentimed"
+echo "  Status: screentimed status"
+echo "  Logs:   tail -f $DATA_DIR/logs/screentimed.log"
+echo "  Stop:   pkill -f screentimed"
 echo ""
