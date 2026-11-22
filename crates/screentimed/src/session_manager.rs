@@ -273,7 +273,9 @@ impl SessionManager {
 
     async fn close_active_session(&mut self, end_time: f64) -> Result<(), DbError> {
         if let Some(id) = self.current_session_id.take() {
-            self.db.close_session(id, end_time, self.min_duration).await?;
+            self.db
+                .close_session(id, end_time, self.min_duration)
+                .await?;
         }
         self.current_start_time = 0.0;
         self.current_url = None;

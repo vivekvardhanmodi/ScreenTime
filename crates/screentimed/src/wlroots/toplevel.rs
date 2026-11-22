@@ -339,18 +339,17 @@ impl WindowTracker for WlrForeignToplevelTracker {
                 }
 
                 match Connection::connect_to_env() {
-                    Ok(new_conn) => match setup_toplevel_session(
-                        &new_conn,
-                        Arc::clone(&shared_active),
-                    ) {
-                        Ok((new_queue, new_state)) => {
-                            info!("Reconnected wlroots foreign toplevel tracker to compositor");
-                            active = Some((new_conn, new_queue, new_state));
+                    Ok(new_conn) => {
+                        match setup_toplevel_session(&new_conn, Arc::clone(&shared_active)) {
+                            Ok((new_queue, new_state)) => {
+                                info!("Reconnected wlroots foreign toplevel tracker to compositor");
+                                active = Some((new_conn, new_queue, new_state));
+                            }
+                            Err(e) => {
+                                debug!("Wayland toplevel reconnect setup failed: {e}");
+                            }
                         }
-                        Err(e) => {
-                            debug!("Wayland toplevel reconnect setup failed: {e}");
-                        }
-                    },
+                    }
                     Err(e) => {
                         debug!("Wayland toplevel reconnect failed: {e}");
                     }

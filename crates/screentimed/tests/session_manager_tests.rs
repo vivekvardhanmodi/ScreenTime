@@ -245,9 +245,7 @@ async fn test_heartbeat_after_long_idle_preserves_resumed_session() {
     sm.handle_idle_change(IdleState::Active, 300.0)
         .await
         .unwrap();
-    let id2 = sm
-        .current_session_id()
-        .expect("Resumed session must exist");
+    let id2 = sm.current_session_id().expect("Resumed session must exist");
     assert_ne!(id1, id2);
 
     sm.handle_heartbeat(310.0).await.unwrap();
@@ -260,7 +258,10 @@ async fn test_heartbeat_after_long_idle_preserves_resumed_session() {
         .expect("Resumed session must not be deleted by first post-idle heartbeat");
     assert_eq!(resumed.start_time, 300.0);
     assert_eq!(resumed.end_time, 310.0);
-    assert_eq!(resumed.website_url.as_deref(), Some("https://rust-lang.org"));
+    assert_eq!(
+        resumed.website_url.as_deref(),
+        Some("https://rust-lang.org")
+    );
 }
 
 #[tokio::test]
@@ -354,7 +355,10 @@ async fn test_multi_browser_url_isolation() {
     assert_eq!(sm.current_url(), Some("https://github.com"));
 
     let chrome_row = db.get_session(chrome_id).await.unwrap().unwrap();
-    assert_eq!(chrome_row.website_url.as_deref(), Some("https://github.com"));
+    assert_eq!(
+        chrome_row.website_url.as_deref(),
+        Some("https://github.com")
+    );
 
     // Focusing Firefox should inherit Firefox's buffered URL
     let firefox_id = sm
@@ -364,7 +368,10 @@ async fn test_multi_browser_url_isolation() {
         .unwrap();
 
     let firefox_row = db.get_session(firefox_id).await.unwrap().unwrap();
-    assert_eq!(firefox_row.website_url.as_deref(), Some("https://mozilla.org"));
+    assert_eq!(
+        firefox_row.website_url.as_deref(),
+        Some("https://mozilla.org")
+    );
 }
 
 #[tokio::test]
@@ -394,8 +401,14 @@ async fn test_pwa_url_update_writes_and_updates_tab_title() {
     .unwrap();
 
     let row = db.get_session(session_id).await.unwrap().unwrap();
-    assert_eq!(row.app_title.as_deref(), Some("Rust Async Deep Dive - YouTube"));
-    assert_eq!(row.website_url.as_deref(), Some("https://www.youtube.com/watch?v=abc123"));
+    assert_eq!(
+        row.app_title.as_deref(),
+        Some("Rust Async Deep Dive - YouTube")
+    );
+    assert_eq!(
+        row.website_url.as_deref(),
+        Some("https://www.youtube.com/watch?v=abc123")
+    );
 
     // Same URL with updated SPA/PWA document title must update the title in-place
     sm.handle_url_update(

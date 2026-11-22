@@ -340,8 +340,7 @@ mod tests {
 
     #[test]
     fn test_url_update_deserialization_compatibility() {
-        let raw_from_chrome =
-            r#"{"type":"url_update","source":"chrome","url":"https://github.com","title":"GitHub"}"#;
+        let raw_from_chrome = r#"{"type":"url_update","source":"chrome","url":"https://github.com","title":"GitHub"}"#;
         let parsed: UrlUpdate = serde_json::from_str(raw_from_chrome).expect("Chrome JSON parse");
         assert_eq!(parsed.browser_type, "chrome");
         assert_eq!(parsed.url.as_deref(), Some("https://github.com"));

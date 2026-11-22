@@ -135,9 +135,7 @@ impl WindowTracker for X11WindowTracker {
             let atoms = Atoms::new(&conn)
                 .map_err(|e| TrackerError::Tracker(format!("Failed to intern atoms: {e}")))?
                 .reply()
-                .map_err(|e| {
-                    TrackerError::Tracker(format!("Failed to intern atoms reply: {e}"))
-                })?;
+                .map_err(|e| TrackerError::Tracker(format!("Failed to intern atoms reply: {e}")))?;
 
             let win_id = query_root_active_window(&conn, root, &atoms);
             Ok(win_id.and_then(|w| fetch_window_info(&conn, w, &atoms)))
