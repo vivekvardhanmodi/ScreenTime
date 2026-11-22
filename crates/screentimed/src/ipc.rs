@@ -79,12 +79,10 @@ impl IpcServerHandle {
         }
         #[cfg(unix)]
         {
-            self._lock.take();
-            if let Some(ref path) = self.socket_path {
+            if let Some(path) = self.socket_path.take() {
                 let _ = std::fs::remove_file(path);
-                let lock_path = PathBuf::from(format!("{}.lock", path.display()));
-                let _ = std::fs::remove_file(lock_path);
             }
+            self._lock.take();
         }
         #[cfg(windows)]
         {
@@ -100,12 +98,10 @@ impl Drop for IpcServerHandle {
         }
         #[cfg(unix)]
         {
-            self._lock.take();
-            if let Some(ref path) = self.socket_path {
+            if let Some(path) = self.socket_path.take() {
                 let _ = std::fs::remove_file(path);
-                let lock_path = PathBuf::from(format!("{}.lock", path.display()));
-                let _ = std::fs::remove_file(lock_path);
             }
+            self._lock.take();
         }
         #[cfg(windows)]
         {
