@@ -1,7 +1,5 @@
 use super::atoms::Atoms;
-use super::common::{
-    fetch_window_info, query_root_active_window, unwatch_window, watch_window,
-};
+use super::common::{fetch_window_info, query_root_active_window, unwatch_window, watch_window};
 use async_trait::async_trait;
 use screentime_core::{TrackerError, WindowInfo, WindowTracker};
 use std::io::Write;
@@ -98,14 +96,7 @@ impl WindowTracker for X11WindowTracker {
         let handle = thread::Builder::new()
             .name("screentime-x11-tracker".into())
             .spawn(move || {
-                run_tracker_loop(
-                    display,
-                    tx,
-                    current_window,
-                    stop_rx,
-                    wake_reader,
-                    init_tx,
-                );
+                run_tracker_loop(display, tx, current_window, stop_rx, wake_reader, init_tx);
             })
             .map_err(TrackerError::Io)?;
 
@@ -174,7 +165,7 @@ struct X11LoopState<'a> {
     tx: &'a mpsc::Sender<Option<WindowInfo>>,
 }
 
-impl<'a> X11LoopState<'a> {
+impl X11LoopState<'_> {
     fn handle_property_notify(&mut self, ev: &PropertyNotifyEvent) {
         if ev.window == self.root && ev.atom == self.atoms._NET_ACTIVE_WINDOW {
             let new_active_id = query_root_active_window(self.conn, self.root, self.atoms);

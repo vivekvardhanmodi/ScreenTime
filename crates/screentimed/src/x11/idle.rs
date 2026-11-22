@@ -339,7 +339,7 @@ fn run_idle_loop(
                 }
             }
         } else {
-            let _ = cvar.wait_while(guard, |s| !*s);
+            let _guard = cvar.wait_while(guard, |s| !*s);
             break;
         }
     }
