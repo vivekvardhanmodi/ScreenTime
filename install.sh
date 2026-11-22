@@ -44,10 +44,6 @@ if ! command -v python3 &>/dev/null; then
     exit 1
 fi
 
-if ! command -v hyprctl &>/dev/null; then
-    warn "hyprctl not found — Hyprland may not be running or installed."
-fi
-
 if ! command -v npm &>/dev/null; then
     warn "npm not found. Node.js & npm are recommended to build the Web App (e.g. sudo pacman -S nodejs npm)."
 fi
