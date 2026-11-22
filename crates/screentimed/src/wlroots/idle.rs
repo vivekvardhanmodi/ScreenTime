@@ -8,12 +8,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
-use tracing::debug;
+use tracing::{debug, info, warn};
 use wayland_client::backend::ObjectId;
 use wayland_client::protocol::wl_output::WlOutput;
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_seat::WlSeat;
-use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
+use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use wayland_protocols::ext::idle_notify::v1::client::{
     ext_idle_notification_v1::{self, ExtIdleNotificationV1},
     ext_idle_notifier_v1::{self, ExtIdleNotifierV1},
@@ -27,15 +27,15 @@ use wayland_protocols_wlr::output_power_management::v1::client::{
 pub struct WaylandIdleState {
     pub registry: Option<WlRegistry>,
     pub notifier: Option<ExtIdleNotifierV1>,
-    pub notifications: Vec<ExtIdleNotificationV1>,
+    pub notification_by_global: HashMap<u32, ExtIdleNotificationV1>,
     pub idled_notifications: HashSet<ObjectId>,
 
     pub output_power_mgr: Option<ZwlrOutputPowerManagerV1>,
-    pub output_powers: Vec<ZwlrOutputPowerV1>,
+    pub output_power_by_global: HashMap<u32, ZwlrOutputPowerV1>,
     pub output_modes: HashMap<ObjectId, bool>, // true = On, false = Off
 
-    pub seats: Vec<WlSeat>,
-    pub outputs: Vec<WlOutput>,
+    pub seat_globals: HashMap<u32, WlSeat>,
+    pub output_globals: HashMap<u32, WlOutput>,
 
     pub idle_timeout_ms: u32,
     pub current_is_idle: bool,
@@ -77,7 +77,7 @@ impl WaylandIdleState {
     pub fn recalculate_idle(&mut self) {
         let new_is_idle = compute_idle_state(
             self.output_modes.values().copied(),
-            self.notifications.len(),
+            self.notification_by_global.len(),
             self.idled_notifications.len(),
         );
 
@@ -93,22 +93,49 @@ impl WaylandIdleState {
         }
     }
 
+    /// Removes protocol objects associated with a hot-unplugged Wayland global.
+    pub fn handle_global_remove(&mut self, name: u32) {
+        let mut changed = false;
+
+        if self.output_globals.remove(&name).is_some() {
+            if let Some(power) = self.output_power_by_global.remove(&name) {
+                self.output_modes.remove(&power.id());
+                power.destroy();
+            }
+            changed = true;
+        }
+
+        if self.seat_globals.remove(&name).is_some() {
+            if let Some(notif) = self.notification_by_global.remove(&name) {
+                self.idled_notifications.remove(&notif.id());
+                notif.destroy();
+            }
+            changed = true;
+        }
+
+        if changed {
+            self.recalculate_idle();
+        }
+    }
+
     /// Cleans up all protocol objects upon shutdown.
     pub fn cleanup(&mut self) {
-        for notif in self.notifications.drain(..) {
+        for (_, notif) in self.notification_by_global.drain() {
             notif.destroy();
         }
         if let Some(notifier) = self.notifier.take() {
             notifier.destroy();
         }
-        for power in self.output_powers.drain(..) {
+        for (_, power) in self.output_power_by_global.drain() {
             power.destroy();
         }
         if let Some(mgr) = self.output_power_mgr.take() {
             mgr.destroy();
         }
-        self.seats.clear();
-        self.outputs.clear();
+        self.seat_globals.clear();
+        self.output_globals.clear();
+        self.output_modes.clear();
+        self.idled_notifications.clear();
     }
 }
 
@@ -121,20 +148,19 @@ impl Dispatch<WlRegistry, ()> for WaylandIdleState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global {
-            name,
-            interface,
-            version,
-        } = event
-        {
-            match interface.as_str() {
+        match event {
+            wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } => match interface.as_str() {
                 "ext_idle_notifier_v1" => {
                     let notifier =
                         registry.bind::<ExtIdleNotifierV1, _, _>(name, version.min(1), qh, ());
-                    for seat in &state.seats {
+                    for (&seat_global, seat) in &state.seat_globals {
                         let notif =
                             notifier.get_idle_notification(state.idle_timeout_ms, seat, qh, ());
-                        state.notifications.push(notif);
+                        state.notification_by_global.insert(seat_global, notif);
                     }
                     state.notifier = Some(notifier);
                 }
@@ -145,9 +171,9 @@ impl Dispatch<WlRegistry, ()> for WaylandIdleState {
                         qh,
                         (),
                     );
-                    for output in &state.outputs {
+                    for (&output_global, output) in &state.output_globals {
                         let power = mgr.get_output_power(output, qh, ());
-                        state.output_powers.push(power);
+                        state.output_power_by_global.insert(output_global, power);
                     }
                     state.output_power_mgr = Some(mgr);
                 }
@@ -156,20 +182,24 @@ impl Dispatch<WlRegistry, ()> for WaylandIdleState {
                     if let Some(ref notifier) = state.notifier {
                         let notif =
                             notifier.get_idle_notification(state.idle_timeout_ms, &seat, qh, ());
-                        state.notifications.push(notif);
+                        state.notification_by_global.insert(name, notif);
                     }
-                    state.seats.push(seat);
+                    state.seat_globals.insert(name, seat);
                 }
                 "wl_output" => {
                     let output = registry.bind::<WlOutput, _, _>(name, version.min(1), qh, ());
                     if let Some(ref mgr) = state.output_power_mgr {
                         let power = mgr.get_output_power(&output, qh, ());
-                        state.output_powers.push(power);
+                        state.output_power_by_global.insert(name, power);
                     }
-                    state.outputs.push(output);
+                    state.output_globals.insert(name, output);
                 }
                 _ => {}
+            },
+            wl_registry::Event::GlobalRemove { name } => {
+                state.handle_global_remove(name);
             }
+            _ => {}
         }
     }
 }
@@ -272,6 +302,50 @@ impl Dispatch<WlOutput, ()> for WaylandIdleState {
     }
 }
 
+fn setup_idle_session(
+    conn: &Connection,
+    timeout_ms: u32,
+    is_idle_atomic: Arc<AtomicBool>,
+) -> Result<(EventQueue<WaylandIdleState>, WaylandIdleState), TrackerError> {
+    let mut event_queue = conn.new_event_queue();
+    let qh = event_queue.handle();
+    let display = conn.display();
+
+    let mut state = WaylandIdleState {
+        registry: None,
+        notifier: None,
+        notification_by_global: HashMap::new(),
+        idled_notifications: HashSet::new(),
+        output_power_mgr: None,
+        output_power_by_global: HashMap::new(),
+        output_modes: HashMap::new(),
+        seat_globals: HashMap::new(),
+        output_globals: HashMap::new(),
+        idle_timeout_ms: timeout_ms,
+        current_is_idle: is_idle_atomic.load(Ordering::SeqCst),
+        shared_is_idle: is_idle_atomic,
+        outgoing: VecDeque::new(),
+    };
+
+    state.registry = Some(display.get_registry(&qh, ()));
+
+    event_queue
+        .roundtrip(&mut state)
+        .map_err(|e| TrackerError::Tracker(format!("Initial Wayland roundtrip failed: {e}")))?;
+
+    if state.notifier.is_none() && state.output_power_mgr.is_none() {
+        return Err(TrackerError::Tracker(
+            "Wayland compositor does not support ext_idle_notifier_v1 or zwlr_output_power_manager_v1".to_string(),
+        ));
+    }
+
+    event_queue
+        .roundtrip(&mut state)
+        .map_err(|e| TrackerError::Tracker(format!("Wayland idle setup roundtrip failed: {e}")))?;
+
+    Ok((event_queue, state))
+}
+
 /// Generic Wayland idle detector.
 ///
 /// Binds `ext-idle-notify-v1` to detect user inactivity while honoring Wayland
@@ -334,51 +408,15 @@ impl WaylandIdleDetector {
 #[async_trait]
 impl IdleDetector for WaylandIdleDetector {
     async fn start(&mut self, tx: mpsc::Sender<IdleState>) -> Result<(), TrackerError> {
+        let can_reconnect = self.connection_source.is_env();
         let conn = self.connection_source.connect()?;
-        let mut event_queue = conn.new_event_queue();
-        let qh = event_queue.handle();
-        let display = conn.display();
-
         let timeout_ms = self.idle_timeout.as_millis().min(u32::MAX as u128) as u32;
         let is_idle_atomic = self.is_idle.clone();
 
-        let mut state = WaylandIdleState {
-            registry: None,
-            notifier: None,
-            notifications: Vec::new(),
-            idled_notifications: HashSet::new(),
-            output_power_mgr: None,
-            output_powers: Vec::new(),
-            output_modes: HashMap::new(),
-            seats: Vec::new(),
-            outputs: Vec::new(),
-            idle_timeout_ms: timeout_ms,
-            current_is_idle: is_idle_atomic.load(Ordering::SeqCst),
-            shared_is_idle: is_idle_atomic.clone(),
-            outgoing: VecDeque::new(),
-        };
+        let (event_queue, state) =
+            setup_idle_session(&conn, timeout_ms, Arc::clone(&is_idle_atomic))?;
 
-        state.registry = Some(display.get_registry(&qh, ()));
-
-        // Initial roundtrip to discover globals
-        event_queue
-            .roundtrip(&mut state)
-            .map_err(|e| TrackerError::Tracker(format!("Initial Wayland roundtrip failed: {e}")))?;
-
-        if state.notifier.is_none() && state.output_power_mgr.is_none() {
-            return Err(TrackerError::Tracker(
-                "Wayland compositor does not support ext_idle_notifier_v1 or zwlr_output_power_manager_v1".to_string(),
-            ));
-        }
-
-        // Second roundtrip to process initial notifications / power modes
-        event_queue.roundtrip(&mut state).map_err(|e| {
-            TrackerError::Tracker(format!("Wayland idle setup roundtrip failed: {e}"))
-        })?;
-
-        // Send initial idle state
-        let initial_idle = state.current_is_idle;
-        let initial_state = if initial_idle {
+        let initial_state = if state.current_is_idle {
             IdleState::Idle
         } else {
             IdleState::Active
@@ -387,18 +425,63 @@ impl IdleDetector for WaylandIdleDetector {
             return Ok(());
         }
 
-        let (stop_tx, stop_rx) = watch::channel(false);
+        let (stop_tx, mut stop_rx) = watch::channel(false);
         self.stop_tx = Some(stop_tx);
 
         let handle = tokio::spawn(async move {
-            let res = run_wayland_event_loop(conn.clone(), event_queue, state, tx, stop_rx).await;
+            let mut active = Some((conn, event_queue, state));
 
-            if let Ok(mut final_state) = res {
-                final_state.cleanup();
-                let _ = conn.flush();
+            loop {
+                if let Some((conn, event_queue, state)) = active.take() {
+                    let res = run_wayland_event_loop(
+                        conn.clone(),
+                        event_queue,
+                        state,
+                        tx.clone(),
+                        stop_rx.clone(),
+                    )
+                    .await;
+
+                    if let Ok(mut final_state) = res {
+                        final_state.cleanup();
+                        let _ = conn.flush();
+                        return Ok(());
+                    }
+
+                    if !can_reconnect || *stop_rx.borrow() || tx.is_closed() {
+                        return Ok(());
+                    }
+
+                    warn!("Wayland idle connection lost; attempting to reconnect...");
+                }
+
+                tokio::select! {
+                    _ = stop_rx.changed() => {
+                        if *stop_rx.borrow() {
+                            return Ok(());
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+                }
+
+                match Connection::connect_to_env() {
+                    Ok(new_conn) => {
+                        match setup_idle_session(&new_conn, timeout_ms, Arc::clone(&is_idle_atomic))
+                        {
+                            Ok((new_queue, new_state)) => {
+                                info!("Reconnected Wayland idle detector to compositor");
+                                active = Some((new_conn, new_queue, new_state));
+                            }
+                            Err(e) => {
+                                debug!("Wayland idle reconnect setup failed: {e}");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        debug!("Wayland idle reconnect failed: {e}");
+                    }
+                }
             }
-
-            Ok(())
         });
 
         self.join_handle = Some(handle);

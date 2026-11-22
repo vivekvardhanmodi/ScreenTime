@@ -1,4 +1,5 @@
 use screentime_core::{IdleState, TrackerError, WindowInfo};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -85,22 +86,48 @@ pub fn parse_active_window_json(buf: &[u8]) -> Result<Option<WindowInfo>, Tracke
     Ok(Some(WindowInfo::new(app_class, title)))
 }
 
-pub fn parse_dpms_payload(payload: &str) -> Option<IdleState> {
+/// Parses a Hyprland `dpms` event payload into `(optional_monitor_name, is_on)`.
+pub fn parse_dpms_event(payload: &str) -> Option<(Option<String>, bool)> {
     let trimmed = payload.trim();
     if trimmed.is_empty() {
         return None;
     }
 
-    let status_str = match trimmed.split_once(',') {
-        Some((_mon, s)) => s.trim(),
-        None => trimmed,
+    let (monitor, status_str) = match trimmed.split_once(',') {
+        Some((mon, s)) => {
+            let mon_trimmed = mon.trim();
+            let mon_opt = if mon_trimmed.is_empty() {
+                None
+            } else {
+                Some(mon_trimmed.to_string())
+            };
+            (mon_opt, s.trim())
+        }
+        None => (None, trimmed),
     };
 
-    match status_str.to_ascii_lowercase().as_str() {
-        "0" | "off" | "false" => Some(IdleState::Idle),
-        "1" | "on" | "true" => Some(IdleState::Active),
-        _ => None,
-    }
+    let is_on = match status_str.to_ascii_lowercase().as_str() {
+        "0" | "off" | "false" => false,
+        "1" | "on" | "true" => true,
+        _ => return None,
+    };
+
+    Some((monitor, is_on))
+}
+
+pub fn parse_dpms_event_line(line: &str) -> Option<(Option<String>, bool)> {
+    let trimmed = line.trim();
+    let payload = trimmed.strip_prefix("dpms>>")?;
+    parse_dpms_event(payload)
+}
+
+pub fn parse_dpms_payload(payload: &str) -> Option<IdleState> {
+    let (_, is_on) = parse_dpms_event(payload)?;
+    Some(if is_on {
+        IdleState::Active
+    } else {
+        IdleState::Idle
+    })
 }
 
 pub fn parse_dpms_line(line: &str) -> Option<IdleState> {
@@ -109,9 +136,12 @@ pub fn parse_dpms_line(line: &str) -> Option<IdleState> {
     parse_dpms_payload(payload)
 }
 
-pub fn parse_monitors_json(buf: &[u8]) -> Result<IdleState, TrackerError> {
+/// Parses `j/monitors` JSON into a per-monitor DPMS status map.
+/// Returns `Ok(None)` when the response is empty or contains no valid monitor entries
+/// (avoiding false idle transitions during monitor reconfiguration/reload).
+pub fn parse_monitors_map(buf: &[u8]) -> Result<Option<HashMap<String, bool>>, TrackerError> {
     if buf.is_empty() {
-        return Ok(IdleState::Idle);
+        return Ok(None);
     }
 
     let val: serde_json::Value = serde_json::from_slice(buf)
@@ -122,20 +152,41 @@ pub fn parse_monitors_json(buf: &[u8]) -> Result<IdleState, TrackerError> {
         .ok_or_else(|| TrackerError::Tracker("Expected monitors JSON array".to_string()))?;
 
     if monitors.is_empty() {
-        return Ok(IdleState::Idle);
+        return Ok(None);
     }
 
-    let any_on = monitors.iter().any(|m| {
-        m.get("dpmsStatus")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-    });
+    let mut map = HashMap::new();
+    for (idx, m) in monitors.iter().enumerate() {
+        let Some(dpms) = m.get("dpmsStatus").and_then(|v| v.as_bool()) else {
+            continue;
+        };
+        let name = m
+            .get("name")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("monitor-{idx}"));
+        map.insert(name, dpms);
+    }
 
-    if any_on {
-        Ok(IdleState::Active)
+    if map.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(map))
+}
+
+pub fn parse_monitors_json(buf: &[u8]) -> Result<Option<IdleState>, TrackerError> {
+    let Some(map) = parse_monitors_map(buf)? else {
+        return Ok(None);
+    };
+
+    let any_on = map.values().any(|&on| on);
+    Ok(Some(if any_on {
+        IdleState::Active
     } else {
-        Ok(IdleState::Idle)
-    }
+        IdleState::Idle
+    }))
 }
 
 pub async fn query_socket1(socket_dir: &Path, command: &[u8]) -> Result<Vec<u8>, TrackerError> {
@@ -158,7 +209,14 @@ pub async fn query_active_window_at(socket_dir: &Path) -> Result<Option<WindowIn
     parse_active_window_json(&buf)
 }
 
-pub async fn query_monitors_at(socket_dir: &Path) -> Result<IdleState, TrackerError> {
+pub async fn query_monitors_map_at(
+    socket_dir: &Path,
+) -> Result<Option<HashMap<String, bool>>, TrackerError> {
+    let buf = query_socket1(socket_dir, b"j/monitors").await?;
+    parse_monitors_map(&buf)
+}
+
+pub async fn query_monitors_at(socket_dir: &Path) -> Result<Option<IdleState>, TrackerError> {
     let buf = query_socket1(socket_dir, b"j/monitors").await?;
     parse_monitors_json(&buf)
 }

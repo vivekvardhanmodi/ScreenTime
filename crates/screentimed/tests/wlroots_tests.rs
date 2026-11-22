@@ -188,13 +188,13 @@ fn test_wayland_idle_state_lifecycle() {
     let mut state = WaylandIdleState {
         registry: None,
         notifier: None,
-        notifications: Vec::new(),
+        notification_by_global: HashMap::new(),
         idled_notifications: HashSet::new(),
         output_power_mgr: None,
-        output_powers: Vec::new(),
+        output_power_by_global: HashMap::new(),
         output_modes: HashMap::new(),
-        seats: Vec::new(),
-        outputs: Vec::new(),
+        seat_globals: HashMap::new(),
+        output_globals: HashMap::new(),
         idle_timeout_ms: 60_000,
         current_is_idle: false,
         shared_is_idle: shared.clone(),
@@ -211,11 +211,12 @@ fn test_wayland_idle_state_lifecycle() {
     assert_eq!(state.pop_outgoing(), Some(IdleState::Active));
     assert_eq!(state.pop_outgoing(), None);
 
+    state.handle_global_remove(999);
     state.cleanup();
-    assert!(state.notifications.is_empty());
-    assert!(state.output_powers.is_empty());
-    assert!(state.seats.is_empty());
-    assert!(state.outputs.is_empty());
+    assert!(state.notification_by_global.is_empty());
+    assert!(state.output_power_by_global.is_empty());
+    assert!(state.seat_globals.is_empty());
+    assert!(state.output_globals.is_empty());
 }
 
 #[test]

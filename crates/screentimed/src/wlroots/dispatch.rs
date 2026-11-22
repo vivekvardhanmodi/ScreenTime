@@ -23,6 +23,10 @@ pub enum WaylandConnectionSource {
 }
 
 impl WaylandConnectionSource {
+    pub fn is_env(&self) -> bool {
+        matches!(self, Self::Env)
+    }
+
     pub fn connect(&mut self) -> Result<Connection, TrackerError> {
         match self {
             Self::Env => Connection::connect_to_env().map_err(|e| {

@@ -4,12 +4,13 @@ use screentime_core::{TrackerError, WindowInfo, WindowTracker};
 use std::collections::{HashMap, VecDeque};
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
-use tracing::debug;
+use tracing::{debug, info, warn};
 use wayland_client::{
     protocol::wl_registry::{self, WlRegistry},
-    Connection, Dispatch, QueueHandle,
+    Connection, Dispatch, EventQueue, QueueHandle,
 };
 use wayland_protocols_wlr::foreign_toplevel::v1::client::{
     zwlr_foreign_toplevel_handle_v1::{self, State, ZwlrForeignToplevelHandleV1},
@@ -203,6 +204,42 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for WlrForeignToplevelState {
     }
 }
 
+fn setup_toplevel_session(
+    conn: &Connection,
+    shared_active: Arc<RwLock<Option<WindowInfo>>>,
+) -> Result<(EventQueue<WlrForeignToplevelState>, WlrForeignToplevelState), TrackerError> {
+    let mut event_queue = conn.new_event_queue();
+    let qh = event_queue.handle();
+    let display = conn.display();
+
+    let mut state = WlrForeignToplevelState {
+        registry: None,
+        manager: None,
+        windows: HashMap::new(),
+        current_active: None,
+        shared_active,
+        outgoing: VecDeque::new(),
+    };
+
+    state.registry = Some(display.get_registry(&qh, ()));
+
+    event_queue
+        .roundtrip(&mut state)
+        .map_err(|e| TrackerError::Tracker(format!("Initial Wayland roundtrip failed: {e}")))?;
+
+    if state.manager.is_none() {
+        return Err(TrackerError::Tracker(
+            "Wayland compositor does not support zwlr_foreign_toplevel_manager_v1".to_string(),
+        ));
+    }
+
+    event_queue
+        .roundtrip(&mut state)
+        .map_err(|e| TrackerError::Tracker(format!("Wayland toplevel roundtrip failed: {e}")))?;
+
+    Ok((event_queue, state))
+}
+
 /// Generic wlroots Wayland window tracker.
 ///
 /// Binds `zwlr_foreign_toplevel_manager_v1` to track active windows across
@@ -250,58 +287,74 @@ impl WlrForeignToplevelTracker {
 #[async_trait]
 impl WindowTracker for WlrForeignToplevelTracker {
     async fn start(&mut self, tx: mpsc::Sender<Option<WindowInfo>>) -> Result<(), TrackerError> {
+        let can_reconnect = self.connection_source.is_env();
         let conn = self.connection_source.connect()?;
-        let mut event_queue = conn.new_event_queue();
-        let qh = event_queue.handle();
-        let display = conn.display();
-
         let shared_active = self.active_window.clone();
-        let mut state = WlrForeignToplevelState {
-            registry: None,
-            manager: None,
-            windows: HashMap::new(),
-            current_active: None,
-            shared_active: shared_active.clone(),
-            outgoing: VecDeque::new(),
-        };
 
-        state.registry = Some(display.get_registry(&qh, ()));
+        let (event_queue, mut state) = setup_toplevel_session(&conn, Arc::clone(&shared_active))?;
 
-        // Initial roundtrip to discover globals
-        event_queue
-            .roundtrip(&mut state)
-            .map_err(|e| TrackerError::Tracker(format!("Initial Wayland roundtrip failed: {e}")))?;
-
-        if state.manager.is_none() {
-            return Err(TrackerError::Tracker(
-                "Wayland compositor does not support zwlr_foreign_toplevel_manager_v1".to_string(),
-            ));
-        }
-
-        // Second roundtrip to process initial toplevels from manager
-        event_queue.roundtrip(&mut state).map_err(|e| {
-            TrackerError::Tracker(format!("Wayland toplevel roundtrip failed: {e}"))
-        })?;
-
-        // Send initial state if any
         while let Some(evt) = state.outgoing.pop_front() {
             if tx.send(evt).await.is_err() {
                 return Ok(());
             }
         }
 
-        let (stop_tx, stop_rx) = watch::channel(false);
+        let (stop_tx, mut stop_rx) = watch::channel(false);
         self.stop_tx = Some(stop_tx);
 
         let handle = tokio::spawn(async move {
-            let res = run_wayland_event_loop(conn.clone(), event_queue, state, tx, stop_rx).await;
+            let mut active = Some((conn, event_queue, state));
 
-            if let Ok(mut final_state) = res {
-                final_state.cleanup();
-                let _ = conn.flush();
+            loop {
+                if let Some((conn, event_queue, state)) = active.take() {
+                    let res = run_wayland_event_loop(
+                        conn.clone(),
+                        event_queue,
+                        state,
+                        tx.clone(),
+                        stop_rx.clone(),
+                    )
+                    .await;
+
+                    if let Ok(mut final_state) = res {
+                        final_state.cleanup();
+                        let _ = conn.flush();
+                        return Ok(());
+                    }
+
+                    if !can_reconnect || *stop_rx.borrow() || tx.is_closed() {
+                        return Ok(());
+                    }
+
+                    warn!("Wayland toplevel connection lost; attempting to reconnect...");
+                }
+
+                tokio::select! {
+                    _ = stop_rx.changed() => {
+                        if *stop_rx.borrow() {
+                            return Ok(());
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+                }
+
+                match Connection::connect_to_env() {
+                    Ok(new_conn) => {
+                        match setup_toplevel_session(&new_conn, Arc::clone(&shared_active)) {
+                            Ok((new_queue, new_state)) => {
+                                info!("Reconnected wlroots foreign toplevel tracker to compositor");
+                                active = Some((new_conn, new_queue, new_state));
+                            }
+                            Err(e) => {
+                                debug!("Wayland toplevel reconnect setup failed: {e}");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        debug!("Wayland toplevel reconnect failed: {e}");
+                    }
+                }
             }
-
-            Ok(())
         });
 
         self.join_handle = Some(handle);
@@ -315,39 +368,11 @@ impl WindowTracker for WlrForeignToplevelTracker {
             }
         }
 
-        // One-shot query against the environment display
         let conn = Connection::connect_to_env().map_err(|e| {
             TrackerError::Tracker(format!("Failed to connect to Wayland display: {e}"))
         })?;
-        let mut event_queue = conn.new_event_queue();
-        let qh = event_queue.handle();
-        let display = conn.display();
-
         let shared_active = Arc::new(RwLock::new(None));
-        let mut state = WlrForeignToplevelState {
-            registry: None,
-            manager: None,
-            windows: HashMap::new(),
-            current_active: None,
-            shared_active: shared_active.clone(),
-            outgoing: VecDeque::new(),
-        };
-
-        state.registry = Some(display.get_registry(&qh, ()));
-
-        event_queue
-            .roundtrip(&mut state)
-            .map_err(|e| TrackerError::Tracker(format!("Wayland roundtrip failed: {e}")))?;
-
-        if state.manager.is_none() {
-            return Err(TrackerError::Tracker(
-                "Wayland compositor does not support zwlr_foreign_toplevel_manager_v1".to_string(),
-            ));
-        }
-
-        event_queue.roundtrip(&mut state).map_err(|e| {
-            TrackerError::Tracker(format!("Wayland toplevel roundtrip failed: {e}"))
-        })?;
+        let (_, mut state) = setup_toplevel_session(&conn, shared_active)?;
 
         let result = state.current_active.clone();
         state.cleanup();

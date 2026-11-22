@@ -1,8 +1,8 @@
 use screentime_core::{DbActorHandle, IdleDetector, IdleState, WindowInfo, WindowTracker};
 use screentimed::hyprland::{
-    parse_active_window_event, parse_active_window_json, parse_active_window_line, parse_dpms_line,
-    parse_dpms_payload, parse_monitors_json, resolve_socket_dir, HyprlandIdleDetector,
-    HyprlandWindowTracker,
+    parse_active_window_event, parse_active_window_json, parse_active_window_line,
+    parse_dpms_event, parse_dpms_line, parse_dpms_payload, parse_monitors_json, resolve_socket_dir,
+    HyprlandIdleDetector, HyprlandWindowTracker,
 };
 use screentimed::SessionManager;
 use std::path::PathBuf;
@@ -96,6 +96,13 @@ fn test_parse_dpms_event_and_line() {
     assert_eq!(parse_dpms_payload("on"), Some(IdleState::Active));
     assert_eq!(parse_dpms_payload("true"), Some(IdleState::Active));
 
+    assert_eq!(parse_dpms_event("DP-1,0"), Some((Some("DP-1".into()), false)));
+    assert_eq!(
+        parse_dpms_event("HDMI-A-1,on"),
+        Some((Some("HDMI-A-1".into()), true))
+    );
+    assert_eq!(parse_dpms_event("0"), Some((None, false)));
+
     assert_eq!(parse_dpms_payload("DP-1,0"), Some(IdleState::Idle));
     assert_eq!(parse_dpms_payload("HDMI-A-1,off"), Some(IdleState::Idle));
     assert_eq!(parse_dpms_payload("DP-1,1"), Some(IdleState::Active));
@@ -110,27 +117,31 @@ fn test_parse_dpms_event_and_line() {
 #[test]
 fn test_parse_monitors_json() {
     let on_json = br#"[{"name":"DP-1","dpmsStatus":true}]"#;
-    assert_eq!(parse_monitors_json(on_json).unwrap(), IdleState::Active);
+    assert_eq!(
+        parse_monitors_json(on_json).unwrap(),
+        Some(IdleState::Active)
+    );
 
     let off_json = br#"[{"name":"DP-1","dpmsStatus":false}]"#;
-    assert_eq!(parse_monitors_json(off_json).unwrap(), IdleState::Idle);
+    assert_eq!(parse_monitors_json(off_json).unwrap(), Some(IdleState::Idle));
 
     let multi_one_on =
         br#"[{"name":"DP-1","dpmsStatus":false},{"name":"HDMI-1","dpmsStatus":true}]"#;
     assert_eq!(
         parse_monitors_json(multi_one_on).unwrap(),
-        IdleState::Active
+        Some(IdleState::Active)
     );
 
     let multi_both_off =
         br#"[{"name":"DP-1","dpmsStatus":false},{"name":"HDMI-1","dpmsStatus":false}]"#;
     assert_eq!(
         parse_monitors_json(multi_both_off).unwrap(),
-        IdleState::Idle
+        Some(IdleState::Idle)
     );
 
-    assert_eq!(parse_monitors_json(b"[]").unwrap(), IdleState::Idle);
-    assert_eq!(parse_monitors_json(b"").unwrap(), IdleState::Idle);
+    // Empty monitor responses represent transient reconfiguration, not confirmed idle
+    assert_eq!(parse_monitors_json(b"[]").unwrap(), None);
+    assert_eq!(parse_monitors_json(b"").unwrap(), None);
 }
 
 #[test]
@@ -200,7 +211,7 @@ async fn test_query_monitors_mock_socket1() {
 
     let idle = HyprlandIdleDetector::new().with_socket_dir(temp.path());
     let state = idle.query_monitors().await.unwrap();
-    assert_eq!(state, IdleState::Active);
+    assert_eq!(state, Some(IdleState::Active));
 }
 
 #[tokio::test]
@@ -342,6 +353,50 @@ async fn test_idle_detector_dpms_streaming_and_polling() {
     let ev2 = idle_rx.recv().await.unwrap();
     assert_eq!(ev2, IdleState::Active);
     assert!(!idle.is_idle());
+
+    idle.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_idle_detector_multi_monitor_dpms_per_output() {
+    let temp = tempdir().unwrap();
+    let socket1_path = temp.path().join(".socket.sock");
+    let socket2_path = temp.path().join(".socket2.sock");
+
+    let listener1 = UnixListener::bind(&socket1_path).unwrap();
+    spawn_mock_socket1_responder(
+        listener1,
+        b"{}",
+        br#"[{"name":"eDP-1","dpmsStatus":true},{"name":"HDMI-1","dpmsStatus":true}]"#,
+    );
+
+    let listener2 = UnixListener::bind(&socket2_path).unwrap();
+    let (idle_tx, mut idle_rx) = mpsc::channel(16);
+
+    let mut idle = HyprlandIdleDetector::new()
+        .with_socket_dir(temp.path())
+        .with_poll_interval(Duration::from_secs(60))
+        .with_retry_interval(Duration::from_millis(50));
+
+    idle.start(idle_tx).await.unwrap();
+
+    let (mut client_stream, _) = listener2.accept().await.unwrap();
+    assert_eq!(idle_rx.recv().await.unwrap(), IdleState::Active);
+
+    // Turning off only one of two monitors must keep system Active
+    client_stream.write_all(b"dpms>>eDP-1,0\n").await.unwrap();
+    let unexpected = tokio::time::timeout(Duration::from_millis(120), idle_rx.recv()).await;
+    assert!(unexpected.is_err(), "Should stay active while HDMI-1 is on");
+    assert!(!idle.is_idle());
+
+    // Turning off the second monitor transitions to Idle
+    client_stream.write_all(b"dpms>>HDMI-1,0\n").await.unwrap();
+    let ev = tokio::time::timeout(Duration::from_millis(500), idle_rx.recv())
+        .await
+        .expect("Expected Idle event when all monitors turn off")
+        .unwrap();
+    assert_eq!(ev, IdleState::Idle);
+    assert!(idle.is_idle());
 
     idle.stop().await.unwrap();
 }
