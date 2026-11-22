@@ -6,15 +6,14 @@ pub const DEFAULT_INTERFACE_NAME: &str = "org.screentime.Tracker";
 
 pub const DEFAULT_KWIN_SCRIPT: &str = include_str!("kwin_tracker.js");
 
-pub fn generate_kwin_script(
-    service_name: &str,
-    object_path: &str,
-    interface_name: &str,
-) -> String {
+pub fn generate_kwin_script(service_name: &str, object_path: &str, interface_name: &str) -> String {
     DEFAULT_KWIN_SCRIPT
-        .replace(DEFAULT_SERVICE_NAME, service_name)
-        .replace(DEFAULT_OBJECT_PATH, object_path)
-        .replace(DEFAULT_INTERFACE_NAME, interface_name)
+        .replace("\"org.screentime.Daemon\"", "__SCREENTIME_SERVICE__")
+        .replace("\"/org/screentime/Tracker\"", "__SCREENTIME_OBJECT__")
+        .replace("\"org.screentime.Tracker\"", "__SCREENTIME_INTERFACE__")
+        .replace("__SCREENTIME_SERVICE__", &format!("\"{service_name}\""))
+        .replace("__SCREENTIME_OBJECT__", &format!("\"{object_path}\""))
+        .replace("__SCREENTIME_INTERFACE__", &format!("\"{interface_name}\""))
 }
 
 pub fn resolve_kwin_script_path(custom_dir: Option<&Path>, filename: Option<&str>) -> PathBuf {
@@ -42,6 +41,18 @@ mod tests {
             DEFAULT_INTERFACE_NAME,
         );
         assert_eq!(DEFAULT_KWIN_SCRIPT, generated);
+    }
+
+    #[test]
+    fn test_script_generation_avoids_overlapping_substitutions() {
+        let generated = generate_kwin_script(
+            DEFAULT_INTERFACE_NAME,
+            "/org/custom/Path",
+            "org.custom.Interface",
+        );
+        assert!(generated.contains("\"org.screentime.Tracker\""));
+        assert!(generated.contains("\"/org/custom/Path\""));
+        assert!(generated.contains("\"org.custom.Interface\""));
     }
 
     #[test]
