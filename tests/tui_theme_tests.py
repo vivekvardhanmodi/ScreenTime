@@ -32,45 +32,38 @@ class TestTuiTheme(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_theme_fallback(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "config.ini"
-            config_path.write_text("[UI]\ntheme = non_existent_theme\n")
+            config_path.write_text("[TUI]\ntheme = non_existent_theme\n")
             db = Database(db_path=Path(tmp_dir) / "test.db")
 
             app = ScreenTimeApp(db=db, config_path=config_path)
             async with app.run_test():
                 self.assertEqual(app.theme, "textual-dark")
 
-    def test_legacy_tui_section_fallback(self):
+    def test_empty_theme_fallback(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "config.ini"
-            config_path.write_text("[TUI]\ntheme = dracula\n")
-            self.assertEqual(get_theme(config_path), "dracula")
+            config_path.write_text("[TUI]\ntheme = \n")
+            self.assertEqual(get_theme(config_path), "textual-dark")
 
-    def test_empty_ui_theme_fallback_to_tui_and_default(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            config_path = Path(tmp_dir) / "config.ini"
-            config_path.write_text("[UI]\ntheme = \n[TUI]\ntheme = dracula\n")
-            self.assertEqual(get_theme(config_path), "dracula")
-
-            config_path.write_text("[UI]\ntheme =   \n")
+            config_path.write_text("[TUI]\ntheme =   \n")
             self.assertEqual(get_theme(config_path), "textual-dark")
 
     def test_save_theme_preserves_unrelated_sections(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "config.ini"
-            config_path.write_text("[Daemon]\nidle_timeout = 120\n[TUI]\ntheme = dracula\n")
+            config_path.write_text("[Daemon]\nidle_timeout = 120\n")
 
             save_theme("nord", path=config_path)
 
             parser = configparser.ConfigParser()
             parser.read(config_path)
-            self.assertEqual(parser.get("UI", "theme"), "nord")
+            self.assertEqual(parser.get("TUI", "theme"), "nord")
             self.assertEqual(parser.get("Daemon", "idle_timeout"), "120")
-            self.assertFalse(parser.has_section("TUI"))
 
     async def test_startup_does_not_rewrite_config(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "config.ini"
-            config_path.write_text("[UI]\ntheme = nord\n")
+            config_path.write_text("[TUI]\ntheme = nord\n")
             mtime_before = os.path.getmtime(config_path)
             db = Database(db_path=Path(tmp_dir) / "test.db")
 
