@@ -69,7 +69,7 @@ Firefox uses a fixed extension ID, so no extra configuration script is required.
 ## Daemon management
 
 The daemon manages window monitoring and database persistence.
-It prevents multiple instances by holding an exclusive lock on its IPC socket.
+It prevents multiple instances by holding an exclusive OS lock (`flock` on Unix, named mutex on Windows) alongside its IPC socket.
 
 ### Running the daemon
 
@@ -196,8 +196,8 @@ Use `Tab` to navigate between views, `r` to refresh, and `q` to exit.
 | :--- | :--- | :--- |
 | SQLite database | `~/.local/share/screentime/screentime.db` | All tracked sessions, categories, and groups. |
 | Daemon log file | `~/.local/share/screentime/logs/screentimed.log` | Rolling daemon diagnostic log. |
-| Daemon IPC socket | `$XDG_RUNTIME_DIR/screentime.sock` | Local Unix domain socket on Linux. |
-| Daemon named pipe | `\\.\pipe\screentime` | Local named pipe on Windows. |
+| Daemon IPC socket | `$XDG_RUNTIME_DIR/screentime/screentimed.sock` | Local Unix domain socket on Linux. |
+| Daemon named pipe | `\\.\pipe\screentimed-ipc` | Local named pipe on Windows. |
 | Chrome native host | `~/.config/google-chrome/NativeMessagingHosts/com.screentime.native.json` | Chrome messaging registration. |
 | Firefox native host | `~/.mozilla/native-messaging-hosts/com.screentime.native.json` | Firefox messaging registration. |
 
@@ -212,7 +212,7 @@ Detailed platform architecture is documented in [docs/architecture.md](docs/arch
 | Linux | Sway, River, Niri, Wayfire | wlroots foreign toplevel v1 | Supported |
 | Linux | Openbox, i3, bspwm, XFCE | X11 EWMH root window properties | Supported |
 | Linux | Hyprland | Dedicated Hyprland Unix socket | Supported |
-| Windows | Windows 10 / 11 | Win32 hooks, adaptive polling, DWM | Supported |
+| Windows | Windows 10 / 11 | Win32 hooks, adaptive idle polling, power/session events | Supported |
 | Linux | GNOME Wayland | Mutter compositor | Not supported |
 
 ## Database backups
