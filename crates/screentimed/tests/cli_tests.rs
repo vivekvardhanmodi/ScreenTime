@@ -23,7 +23,7 @@ fn test_cli_version_flag() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("screentimed 0.1.0"));
+    assert!(stdout.contains("screentimed 0.2.0"));
 
     let output_short = Command::new(CLI_BIN)
         .arg("-V")
@@ -31,7 +31,7 @@ fn test_cli_version_flag() {
         .expect("Failed to execute screentimed -V");
     assert!(output_short.status.success());
     let stdout_short = String::from_utf8_lossy(&output_short.stdout);
-    assert!(stdout_short.contains("screentimed 0.1.0"));
+    assert!(stdout_short.contains("screentimed 0.2.0"));
 }
 
 #[test]
