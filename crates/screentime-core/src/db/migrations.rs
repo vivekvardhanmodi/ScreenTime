@@ -1,5 +1,5 @@
 use crate::db::error::DbError;
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 use rusqlite_migration::{Migrations, M};
 use std::collections::HashSet;
 
@@ -54,31 +54,37 @@ pub fn migrations() -> Migrations<'static> {
 }
 
 fn baseline_legacy_database(conn: &mut Connection) -> Result<(), DbError> {
-    let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
-    let column_names: HashSet<String> = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .filter_map(Result::ok)
-        .collect();
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+    let column_names: HashSet<String> = {
+        let mut stmt = tx.prepare("PRAGMA table_info(sessions)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut names = HashSet::new();
+        for name in rows {
+            names.insert(name?);
+        }
+        names
+    };
 
     if column_names.contains("website_domain") && !column_names.contains("website_url") {
-        let _ = conn.execute(
+        tx.execute(
             "ALTER TABLE sessions RENAME COLUMN website_domain TO website_url",
             [],
-        );
+        )?;
     }
 
     if column_names.contains("website_title") {
-        let _ = conn.execute("ALTER TABLE sessions DROP COLUMN website_title", []);
+        tx.execute("ALTER TABLE sessions DROP COLUMN website_title", [])?;
     }
 
     if !column_names.contains("device_id") && !column_names.is_empty() {
-        let _ = conn.execute(
+        tx.execute(
             "ALTER TABLE sessions ADD COLUMN device_id TEXT DEFAULT 'hyprland-pc'",
             [],
-        );
+        )?;
     }
 
-    let _ = conn.execute(
+    tx.execute(
         r#"
         DELETE FROM sessions
         WHERE id NOT IN (
@@ -88,10 +94,11 @@ fn baseline_legacy_database(conn: &mut Connection) -> Result<(), DbError> {
         )
         "#,
         [],
-    );
+    )?;
 
-    conn.execute_batch(MIGRATION_1_SQL)?;
-    conn.execute_batch("PRAGMA user_version = 1;")?;
+    tx.execute_batch(MIGRATION_1_SQL)?;
+    tx.execute_batch("PRAGMA user_version = 1;")?;
+    tx.commit()?;
 
     Ok(())
 }
