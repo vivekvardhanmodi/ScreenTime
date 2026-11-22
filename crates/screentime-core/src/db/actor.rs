@@ -19,6 +19,11 @@ pub enum DbCommand {
         end_time: f64,
         responder: oneshot::Sender<Result<(), DbError>>,
     },
+    UpdateSessionTitle {
+        session_id: i64,
+        title: String,
+        responder: oneshot::Sender<Result<(), DbError>>,
+    },
     UpdateWebsiteUrl {
         session_id: i64,
         url: Option<String>,
@@ -106,6 +111,15 @@ impl DbActorHandle {
                             responder,
                         } => {
                             let res = Self::handle_update_end_time(&mut conn, session_id, end_time);
+                            let _ = responder.send(res);
+                        }
+                        DbCommand::UpdateSessionTitle {
+                            session_id,
+                            title,
+                            responder,
+                        } => {
+                            let res =
+                                Self::handle_update_session_title(&mut conn, session_id, title);
                             let _ = responder.send(res);
                         }
                         DbCommand::UpdateWebsiteUrl {
@@ -236,6 +250,20 @@ impl DbActorHandle {
         tx.execute(
             "UPDATE sessions SET end_time = ?1 WHERE id = ?2",
             rusqlite::params![end_time, session_id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn handle_update_session_title(
+        conn: &mut Connection,
+        session_id: i64,
+        title: String,
+    ) -> Result<(), DbError> {
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
+            "UPDATE sessions SET app_title = ?1 WHERE id = ?2",
+            rusqlite::params![title, session_id],
         )?;
         tx.commit()?;
         Ok(())
@@ -411,6 +439,23 @@ impl DbActorHandle {
             .send(DbCommand::UpdateEndTime {
                 session_id,
                 end_time,
+                responder,
+            })
+            .await
+            .map_err(|_| DbError::ChannelClosed)?;
+        receiver.await.map_err(|_| DbError::ChannelClosed)?
+    }
+
+    pub async fn update_session_title(
+        &self,
+        session_id: i64,
+        title: impl Into<String>,
+    ) -> Result<(), DbError> {
+        let (responder, receiver) = oneshot::channel();
+        self.sender
+            .send(DbCommand::UpdateSessionTitle {
+                session_id,
+                title: title.into(),
                 responder,
             })
             .await

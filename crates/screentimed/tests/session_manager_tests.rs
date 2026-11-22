@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use screentime_core::{
-    DbActorHandle, IdleDetector, IdleState, TitleRulesCache, TrackerError, WindowInfo,
+    DbActorHandle, IdleDetector, IdleState, TitleRulesCache, TrackerError, UrlUpdate, WindowInfo,
     WindowTracker,
 };
 use screentimed::SessionManager;
@@ -218,7 +218,6 @@ async fn test_heartbeat_after_long_idle_preserves_resumed_session() {
     sm.handle_idle_change(IdleState::Idle, 110.0).await.unwrap();
     sm.handle_heartbeat(200.0).await.unwrap();
 
-    // Resume after >30s idle; first heartbeat must update the resumed session instead of deleting it
     sm.handle_idle_change(IdleState::Active, 300.0)
         .await
         .unwrap();
@@ -285,6 +284,103 @@ async fn test_browser_url_delayed_update_and_tab_switch() {
     let row2 = db.get_session(new_session_id).await.unwrap().unwrap();
     assert_eq!(row2.start_time, 308.0);
     assert_eq!(row2.website_url.as_deref(), Some("https://github.com"));
+}
+
+#[tokio::test]
+async fn test_multi_browser_url_isolation() {
+    let dir = tempdir().expect("Failed to create tempdir");
+    let db_path = dir.path().join("test_multi_browser.db");
+    let db = DbActorHandle::spawn(&db_path).expect("Failed to spawn DbActor");
+
+    let mut sm = SessionManager::new(db.clone());
+
+    let chrome_id = sm
+        .handle_window_change(
+            Some(WindowInfo::new("google-chrome", "Google Chrome")),
+            100.0,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    sm.handle_url_update(
+        UrlUpdate::new(
+            "chrome",
+            Some("https://github.com".to_string()),
+            Some("GitHub".to_string()),
+        ),
+        100.5,
+    )
+    .await
+    .unwrap();
+
+    // Background Firefox event must not overwrite or split active Chrome session
+    sm.handle_url_update(
+        UrlUpdate::new(
+            "firefox",
+            Some("https://mozilla.org".to_string()),
+            Some("Mozilla".to_string()),
+        ),
+        103.0,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(sm.current_session_id(), Some(chrome_id));
+    assert_eq!(sm.current_url(), Some("https://github.com"));
+
+    let chrome_row = db.get_session(chrome_id).await.unwrap().unwrap();
+    assert_eq!(chrome_row.website_url.as_deref(), Some("https://github.com"));
+
+    // Focusing Firefox should inherit Firefox's buffered URL
+    let firefox_id = sm
+        .handle_window_change(Some(WindowInfo::new("firefox", "Mozilla Firefox")), 105.0)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let firefox_row = db.get_session(firefox_id).await.unwrap().unwrap();
+    assert_eq!(
+        firefox_row.website_url.as_deref(),
+        Some("https://mozilla.org")
+    );
+}
+
+#[tokio::test]
+async fn test_pwa_url_update_writes_tab_title() {
+    let dir = tempdir().expect("Failed to create tempdir");
+    let db_path = dir.path().join("test_pwa_title.db");
+    let db = DbActorHandle::spawn(&db_path).expect("Failed to spawn DbActor");
+
+    let mut sm = SessionManager::new(db.clone());
+
+    let pwa_window = WindowInfo::new("chrome-agimnkijcaahngcdmfeangaknmldooml-Default", "YouTube");
+    let session_id = sm
+        .handle_window_change(Some(pwa_window), 500.0)
+        .await
+        .unwrap()
+        .unwrap();
+
+    sm.handle_url_update(
+        UrlUpdate::new(
+            "chrome",
+            Some("https://www.youtube.com/watch?v=abc123".to_string()),
+            Some("Rust Async Deep Dive - YouTube".to_string()),
+        ),
+        500.6,
+    )
+    .await
+    .unwrap();
+
+    let row = db.get_session(session_id).await.unwrap().unwrap();
+    assert_eq!(
+        row.app_title.as_deref(),
+        Some("Rust Async Deep Dive - YouTube")
+    );
+    assert_eq!(
+        row.website_url.as_deref(),
+        Some("https://www.youtube.com/watch?v=abc123")
+    );
 }
 
 #[tokio::test]
@@ -440,7 +536,6 @@ async fn test_run_loop_requeries_active_window_on_idle_resume() {
     idle_clone.set_idle_state(IdleState::Idle).await;
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    // Window changed while idle without emitting a stream event
     tracker_clone
         .set_window_silently(Some(WindowInfo::new("code", "after-resume")))
         .await;

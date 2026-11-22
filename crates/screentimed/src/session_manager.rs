@@ -4,6 +4,7 @@ use screentime_core::{
     DbActorHandle, DbError, IdleDetector, IdleState, Session, TitleRulesCache, WindowInfo,
     WindowTracker,
 };
+use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tracing::{debug, info};
@@ -47,7 +48,7 @@ pub struct SessionManager {
     has_external_display: bool,
     sleep_rx: Option<mpsc::Receiver<SleepEvent>>,
     last_heartbeat: f64,
-    last_known_browser_url: Option<String>,
+    browser_urls: HashMap<String, String>,
     chrome_window_class: String,
     firefox_window_class: String,
     heartbeat_interval: Duration,
@@ -73,7 +74,7 @@ impl SessionManager {
             has_external_display: false,
             sleep_rx: None,
             last_heartbeat: 0.0,
-            last_known_browser_url: None,
+            browser_urls: HashMap::new(),
             chrome_window_class: "google-chrome".to_string(),
             firefox_window_class: "firefox".to_string(),
             heartbeat_interval: Duration::from_secs(10),
@@ -141,13 +142,55 @@ impl SessionManager {
         self.heartbeat_interval
     }
 
-    pub fn is_browser(&self, app_class: &str) -> bool {
+    fn browser_family_for_class(&self, app_class: &str) -> Option<&'static str> {
         let lower = app_class.to_lowercase();
         let chrome_lower = self.chrome_window_class.to_lowercase();
         let firefox_lower = self.firefox_window_class.to_lowercase();
-        (!chrome_lower.is_empty() && lower.contains(&chrome_lower))
-            || (!firefox_lower.is_empty() && lower.contains(&firefox_lower))
-            || is_browser_app(app_class)
+
+        if (!firefox_lower.is_empty() && lower.contains(&firefox_lower))
+            || lower.contains("firefox")
+            || lower.contains("waterfox")
+            || lower.contains("librewolf")
+            || lower.contains("zen")
+            || lower.contains("floorp")
+        {
+            Some("firefox")
+        } else if (!chrome_lower.is_empty() && lower.contains(&chrome_lower))
+            || lower.contains("chrome")
+            || lower.contains("chromium")
+            || lower.contains("brave")
+            || lower.contains("vivaldi")
+            || lower.contains("opera")
+            || lower.contains("edge")
+        {
+            Some("chrome")
+        } else {
+            None
+        }
+    }
+
+    fn normalize_browser_source(&self, source: &str) -> String {
+        let lower = source.trim().to_lowercase();
+        if lower.is_empty() || lower == "browser" {
+            return "browser".to_string();
+        }
+        if let Some(family) = self.browser_family_for_class(&lower) {
+            family.to_string()
+        } else {
+            lower
+        }
+    }
+
+    fn store_browser_url(&mut self, source_key: &str, url: Option<String>) {
+        if let Some(u) = url {
+            self.browser_urls.insert(source_key.to_string(), u);
+        } else {
+            self.browser_urls.remove(source_key);
+        }
+    }
+
+    pub fn is_browser(&self, app_class: &str) -> bool {
+        self.browser_family_for_class(app_class).is_some() || is_browser_app(app_class)
     }
 
     pub fn current_session_id(&self) -> Option<i64> {
@@ -252,11 +295,14 @@ impl SessionManager {
             .title_rules
             .resolve_app_class(&win.app_class, Some(&win.title));
 
-        let initial_url = if self.is_browser(&win.app_class) {
-            self.last_known_browser_url.clone()
-        } else {
-            None
-        };
+        let initial_url = self
+            .browser_family_for_class(&win.app_class)
+            .and_then(|family| {
+                self.browser_urls
+                    .get(family)
+                    .or_else(|| self.browser_urls.get("browser"))
+                    .cloned()
+            });
 
         let mut session = Session::new(now, now, effective_class.clone())
             .with_title(win.title.clone())
@@ -364,32 +410,42 @@ impl SessionManager {
     }
 
     pub async fn handle_url_update(&mut self, update: UrlUpdate, now: f64) -> Result<(), DbError> {
+        let source_key = self.normalize_browser_source(&update.browser_type);
+
         let Some(session_id) = self.current_session_id else {
-            if let Some(url) = update.url {
-                self.last_known_browser_url = Some(url);
-            }
+            self.store_browser_url(&source_key, update.url);
             return Ok(());
         };
 
         if !self.is_tracking_active() || self.current_window.is_none() {
-            if let Some(url) = update.url {
-                self.last_known_browser_url = Some(url);
-            }
+            self.store_browser_url(&source_key, update.url);
             return Ok(());
         }
 
-        let win = self.current_window.as_ref().unwrap();
-        if !self.is_browser(&win.app_class) {
-            if let Some(url) = update.url {
-                self.last_known_browser_url = Some(url);
-            } else {
-                self.last_known_browser_url = None;
-            }
+        let active_family = self
+            .current_window
+            .as_ref()
+            .and_then(|win| self.browser_family_for_class(&win.app_class));
+
+        let Some(active_family) = active_family else {
+            self.store_browser_url(&source_key, update.url);
+            return Ok(());
+        };
+
+        // Ignore updates from a different browser family while buffering them for later focus
+        if source_key != "browser" && source_key != active_family {
+            self.store_browser_url(&source_key, update.url);
             return Ok(());
         }
+
+        let cache_key = if source_key == "browser" {
+            active_family
+        } else {
+            source_key.as_str()
+        };
 
         let Some(url) = update.url else {
-            self.last_known_browser_url = None;
+            self.store_browser_url(cache_key, None);
             if self.current_url.is_some() {
                 let win_clone = self.current_window.clone().unwrap();
                 let effective_class = self
@@ -413,7 +469,7 @@ impl SessionManager {
             return Ok(());
         };
 
-        self.last_known_browser_url = Some(url.clone());
+        self.store_browser_url(cache_key, Some(url.clone()));
 
         if self.current_url.as_deref() == Some(&url) {
             return Ok(());
@@ -422,6 +478,13 @@ impl SessionManager {
         let elapsed = now - self.current_start_time;
 
         if elapsed <= 2.0 && self.current_url.is_none() {
+            if let Some(ref title) = update.title {
+                if !title.trim().is_empty() {
+                    self.db
+                        .update_session_title(session_id, title.clone())
+                        .await?;
+                }
+            }
             self.db
                 .update_website_url(session_id, Some(url.clone()))
                 .await?;
@@ -432,7 +495,10 @@ impl SessionManager {
                 .current_effective_class
                 .clone()
                 .unwrap_or_else(|| win_clone.app_class.clone());
-            let title = update.title.unwrap_or(win_clone.title);
+            let title = update
+                .title
+                .filter(|t| !t.trim().is_empty())
+                .unwrap_or(win_clone.title);
 
             self.close_active_session(now).await?;
 
