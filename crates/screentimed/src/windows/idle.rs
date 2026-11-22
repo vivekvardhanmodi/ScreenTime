@@ -5,13 +5,128 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
-#[cfg(target_os = "windows")]
 use tracing::debug;
 
 use super::events::PlatformEvent;
 use super::math::{calculate_idle_time, calculate_poll_interval, evaluate_idle_transition};
 
 pub type MockTickFn = Arc<dyn Fn() -> (u32, u32) + Send + Sync>;
+type IdleDurationFn = Box<dyn Fn() -> Duration + Send + 'static>;
+
+struct IdleLoopConfig {
+    idle_threshold: Duration,
+    resume_threshold: Duration,
+    is_idle: Arc<AtomicBool>,
+    tx: mpsc::Sender<IdleState>,
+    sleep_tx: Option<mpsc::Sender<crate::sleep::SleepEvent>>,
+}
+
+fn spawn_idle_loop(
+    mut event_rx: Option<mpsc::UnboundedReceiver<PlatformEvent>>,
+    idle_duration_fn: IdleDurationFn,
+    mut stop_rx: watch::Receiver<bool>,
+    config: IdleLoopConfig,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut current_state = IdleState::Active;
+        let mut next_poll = calculate_poll_interval(false, Duration::ZERO, config.idle_threshold);
+
+        loop {
+            tokio::select! {
+                _ = stop_rx.changed() => {
+                    if *stop_rx.borrow() {
+                        break;
+                    }
+                }
+                event_opt = async {
+                    if let Some(ref mut rx) = event_rx {
+                        rx.recv().await
+                    } else {
+                        std::future::pending().await
+                    }
+                } => {
+                    match event_opt {
+                        Some(PlatformEvent::DisplayOff) | Some(PlatformEvent::SessionLocked) => {
+                            debug!("DisplayOff or SessionLocked received -> Idle");
+                            if current_state != IdleState::Idle {
+                                current_state = IdleState::Idle;
+                                config.is_idle.store(true, Ordering::SeqCst);
+                                if config.tx.send(IdleState::Idle).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Some(PlatformEvent::DisplayOn) | Some(PlatformEvent::SessionUnlocked) => {
+                            debug!("DisplayOn or SessionUnlocked received -> Active");
+                            if current_state != IdleState::Active {
+                                current_state = IdleState::Active;
+                                config.is_idle.store(false, Ordering::SeqCst);
+                                if config.tx.send(IdleState::Active).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Some(PlatformEvent::Suspend) => {
+                            debug!("Suspend received -> notifying sleep");
+                            if let Some(ref stx) = config.sleep_tx {
+                                let _ = stx.send(crate::sleep::SleepEvent::Sleep).await;
+                            }
+                            if current_state != IdleState::Idle {
+                                current_state = IdleState::Idle;
+                                config.is_idle.store(true, Ordering::SeqCst);
+                                if config.tx.send(IdleState::Idle).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Some(PlatformEvent::Resume) => {
+                            debug!("Resume received -> notifying wake");
+                            if let Some(ref stx) = config.sleep_tx {
+                                let _ = stx.send(crate::sleep::SleepEvent::Wake).await;
+                            }
+                            if current_state != IdleState::Active {
+                                current_state = IdleState::Active;
+                                config.is_idle.store(false, Ordering::SeqCst);
+                                if config.tx.send(IdleState::Active).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Some(_) => {}
+                        None => {
+                            event_rx = None;
+                        }
+                    }
+                }
+                _ = tokio::time::sleep(next_poll) => {
+                    let idle_duration = idle_duration_fn();
+
+                    let new_state = evaluate_idle_transition(
+                        current_state,
+                        idle_duration,
+                        config.idle_threshold,
+                        config.resume_threshold,
+                    );
+
+                    if new_state != current_state {
+                        debug!("Idle state transition: {:?} -> {:?}", current_state, new_state);
+                        current_state = new_state;
+                        config.is_idle.store(new_state.is_idle(), Ordering::SeqCst);
+                        if config.tx.send(new_state).await.is_err() {
+                            break;
+                        }
+                    }
+
+                    next_poll = calculate_poll_interval(
+                        current_state.is_idle(),
+                        idle_duration,
+                        config.idle_threshold,
+                    );
+                }
+            }
+        }
+    })
+}
 
 pub struct WindowsIdleDetector {
     idle_threshold: Duration,
@@ -100,227 +215,52 @@ impl WindowsIdleDetector {
 #[async_trait]
 impl IdleDetector for WindowsIdleDetector {
     async fn start(&mut self, tx: mpsc::Sender<IdleState>) -> Result<(), TrackerError> {
-        let (stop_tx, mut stop_rx) = watch::channel(false);
+        let (stop_tx, stop_rx) = watch::channel(false);
         self.stop_tx = Some(stop_tx);
 
-        let is_idle_atomic = self.is_idle.clone();
-        let idle_threshold = self.idle_threshold;
-        let resume_threshold = self.resume_threshold;
-        let mock_tick_fn = self.mock_tick_fn.clone();
-        let sleep_tx = self.sleep_tx.clone();
+        let config = IdleLoopConfig {
+            idle_threshold: self.idle_threshold,
+            resume_threshold: self.resume_threshold,
+            is_idle: self.is_idle.clone(),
+            tx,
+            sleep_tx: self.sleep_tx.clone(),
+        };
 
-        // Mode 1: Mock mode (works across all platforms, including Linux test harness)
         if self.mock_event_rx.is_some() || self.mock_tick_fn.is_some() {
-            let mut mock_rx = self.mock_event_rx.take();
-
-            let handle = tokio::spawn(async move {
-                let mut current_state = IdleState::Active;
-                let mut next_poll = calculate_poll_interval(false, Duration::ZERO, idle_threshold);
-
-                loop {
-                    tokio::select! {
-                        _ = stop_rx.changed() => {
-                            if *stop_rx.borrow() {
-                                break;
-                            }
-                        }
-                        event_opt = async {
-                            if let Some(ref mut rx) = mock_rx {
-                                rx.recv().await
-                            } else {
-                                std::future::pending().await
-                            }
-                        } => {
-                            match event_opt {
-                                Some(PlatformEvent::DisplayOff) | Some(PlatformEvent::SessionLocked) => {
-                                    if current_state != IdleState::Idle {
-                                        current_state = IdleState::Idle;
-                                        is_idle_atomic.store(true, Ordering::SeqCst);
-                                        if tx.send(IdleState::Idle).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                                Some(PlatformEvent::DisplayOn) | Some(PlatformEvent::SessionUnlocked) => {
-                                    if current_state != IdleState::Active {
-                                        current_state = IdleState::Active;
-                                        is_idle_atomic.store(false, Ordering::SeqCst);
-                                        if tx.send(IdleState::Active).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                                Some(PlatformEvent::Suspend) => {
-                                    if let Some(ref stx) = sleep_tx {
-                                        let _ = stx.send(crate::sleep::SleepEvent::Sleep).await;
-                                    }
-                                    if current_state != IdleState::Idle {
-                                        current_state = IdleState::Idle;
-                                        is_idle_atomic.store(true, Ordering::SeqCst);
-                                        if tx.send(IdleState::Idle).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                                Some(PlatformEvent::Resume) => {
-                                    if let Some(ref stx) = sleep_tx {
-                                        let _ = stx.send(crate::sleep::SleepEvent::Wake).await;
-                                    }
-                                    if current_state != IdleState::Active {
-                                        current_state = IdleState::Active;
-                                        is_idle_atomic.store(false, Ordering::SeqCst);
-                                        if tx.send(IdleState::Active).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                                Some(_) => {}
-                                None => {
-                                    // Channel closed; keep running tick loop if available
-                                    mock_rx = None;
-                                }
-                            }
-                        }
-                        _ = tokio::time::sleep(next_poll) => {
-                            let idle_duration = if let Some(ref tick_fn) = mock_tick_fn {
-                                let (current, last_input) = tick_fn();
-                                calculate_idle_time(current, last_input)
-                            } else {
-                                Duration::ZERO
-                            };
-
-                            let new_state = evaluate_idle_transition(
-                                current_state,
-                                idle_duration,
-                                idle_threshold,
-                                resume_threshold,
-                            );
-
-                            if new_state != current_state {
-                                current_state = new_state;
-                                is_idle_atomic.store(new_state.is_idle(), Ordering::SeqCst);
-                                if tx.send(new_state).await.is_err() {
-                                    break;
-                                }
-                            }
-
-                            next_poll = calculate_poll_interval(
-                                current_state.is_idle(),
-                                idle_duration,
-                                idle_threshold,
-                            );
-                        }
-                    }
+            let mock_rx = self.mock_event_rx.take();
+            let mock_tick_fn = self.mock_tick_fn.clone();
+            let idle_duration_fn: IdleDurationFn = Box::new(move || {
+                if let Some(ref tick_fn) = mock_tick_fn {
+                    let (current, last_input) = tick_fn();
+                    calculate_idle_time(current, last_input)
+                } else {
+                    Duration::ZERO
                 }
             });
 
-            self.join_handle = Some(handle);
+            self.join_handle = Some(spawn_idle_loop(mock_rx, idle_duration_fn, stop_rx, config));
             return Ok(());
         }
 
-        // Mode 2: Live Windows environment
         #[cfg(target_os = "windows")]
         {
-            let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+            let (event_tx, event_rx) = mpsc::unbounded_channel();
             let listener_handle = super::listener::spawn_win32_listener(event_tx);
             self.listener_handle = Some(listener_handle);
 
-            let handle = tokio::spawn(async move {
-                let mut current_state = IdleState::Active;
-                let mut next_poll = calculate_poll_interval(false, Duration::ZERO, idle_threshold);
-
-                loop {
-                    tokio::select! {
-                        _ = stop_rx.changed() => {
-                            if *stop_rx.borrow() {
-                                break;
-                            }
-                        }
-                        event_opt = event_rx.recv() => {
-                            match event_opt {
-                                Some(PlatformEvent::DisplayOff) | Some(PlatformEvent::SessionLocked) => {
-                                    debug!("DisplayOff or SessionLocked received -> Idle");
-                                    if current_state != IdleState::Idle {
-                                        current_state = IdleState::Idle;
-                                        is_idle_atomic.store(true, Ordering::SeqCst);
-                                        if tx.send(IdleState::Idle).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                                Some(PlatformEvent::DisplayOn) | Some(PlatformEvent::SessionUnlocked) => {
-                                    debug!("DisplayOn or SessionUnlocked received -> Active");
-                                    if current_state != IdleState::Active {
-                                        current_state = IdleState::Active;
-                                        is_idle_atomic.store(false, Ordering::SeqCst);
-                                        if tx.send(IdleState::Active).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                                Some(PlatformEvent::Suspend) => {
-                                    debug!("Suspend received -> notifying sleep");
-                                    if let Some(ref stx) = sleep_tx {
-                                        let _ = stx.send(crate::sleep::SleepEvent::Sleep).await;
-                                    }
-                                    if current_state != IdleState::Idle {
-                                        current_state = IdleState::Idle;
-                                        is_idle_atomic.store(true, Ordering::SeqCst);
-                                        if tx.send(IdleState::Idle).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                                Some(PlatformEvent::Resume) => {
-                                    debug!("Resume received -> notifying wake");
-                                    if let Some(ref stx) = sleep_tx {
-                                        let _ = stx.send(crate::sleep::SleepEvent::Wake).await;
-                                    }
-                                    if current_state != IdleState::Active {
-                                        current_state = IdleState::Active;
-                                        is_idle_atomic.store(false, Ordering::SeqCst);
-                                        if tx.send(IdleState::Active).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                                Some(_) => {}
-                                None => break,
-                            }
-                        }
-                        _ = tokio::time::sleep(next_poll) => {
-                            let idle_duration = match super::win32_utils::get_idle_time_millis() {
-                                Ok(ms) => Duration::from_millis(ms as u64),
-                                Err(_) => Duration::ZERO,
-                            };
-
-                            let new_state = evaluate_idle_transition(
-                                current_state,
-                                idle_duration,
-                                idle_threshold,
-                                resume_threshold,
-                            );
-
-                            if new_state != current_state {
-                                debug!("Idle state transition: {:?} -> {:?}", current_state, new_state);
-                                current_state = new_state;
-                                is_idle_atomic.store(new_state.is_idle(), Ordering::SeqCst);
-                                if tx.send(new_state).await.is_err() {
-                                    break;
-                                }
-                            }
-
-                            next_poll = calculate_poll_interval(
-                                current_state.is_idle(),
-                                idle_duration,
-                                idle_threshold,
-                            );
-                        }
-                    }
+            let idle_duration_fn: IdleDurationFn = Box::new(|| {
+                match super::win32_utils::get_idle_time_millis() {
+                    Ok(ms) => Duration::from_millis(ms as u64),
+                    Err(_) => Duration::ZERO,
                 }
             });
 
-            self.join_handle = Some(handle);
+            self.join_handle = Some(spawn_idle_loop(
+                Some(event_rx),
+                idle_duration_fn,
+                stop_rx,
+                config,
+            ));
             Ok(())
         }
 
