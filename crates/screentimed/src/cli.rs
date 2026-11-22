@@ -120,11 +120,9 @@ where
     T: Into<String>,
 {
     let raw_args: Vec<String> = args.into_iter().map(|s| s.into()).collect();
-    // Drop program binary name if present
+    // Allow direct callers and tests to pass argv including binary name; main() already strips argv[0].
     let items = if !raw_args.is_empty()
-        && (raw_args[0].ends_with("screentimed")
-            || raw_args[0].ends_with("screentimed.exe")
-            || raw_args[0].starts_with("target/"))
+        && (raw_args[0].ends_with("screentimed") || raw_args[0].ends_with("screentimed.exe"))
     {
         &raw_args[1..]
     } else {
@@ -422,6 +420,7 @@ pub fn run_install_manifests(opts: ManifestInstallOptions) -> i32 {
 
 pub async fn run_daemon(opts: RunOptions) -> i32 {
     let config = crate::Config::load_from_env_and_cli(&opts);
+    let _ = crate::init_logging(&config);
 
     let platform = match config.platform {
         Some(p) => p,
@@ -633,6 +632,7 @@ mod tests {
 
     #[test]
     fn test_parse_help_and_version() {
+        assert_eq!(parse_cli_args(vec!["--help"]).unwrap(), Subcommand::Help);
         assert_eq!(
             parse_cli_args(vec!["screentimed", "--help"]).unwrap(),
             Subcommand::Help
@@ -659,6 +659,12 @@ mod tests {
     fn test_parse_default_and_run_options() {
         let default_run = parse_cli_args(vec!["screentimed"]).unwrap();
         assert_eq!(default_run, Subcommand::Run(RunOptions::default()));
+
+        let empty_args: Vec<&str> = Vec::new();
+        assert_eq!(
+            parse_cli_args(empty_args).unwrap(),
+            Subcommand::Run(RunOptions::default())
+        );
 
         let run_args = parse_cli_args(vec![
             "screentimed",

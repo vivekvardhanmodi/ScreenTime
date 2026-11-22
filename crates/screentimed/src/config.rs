@@ -238,35 +238,7 @@ pub fn default_data_dir() -> PathBuf {
 }
 
 pub fn default_log_dir() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(app_data) = std::env::var("APPDATA") {
-            if !app_data.trim().is_empty() {
-                return PathBuf::from(app_data).join("screentime").join("logs");
-            }
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        return default_home_dir()
-            .join("Library")
-            .join("Application Support")
-            .join("screentime")
-            .join("logs");
-    }
-
-    if let Ok(xdg_data) = std::env::var("XDG_DATA_HOME") {
-        if !xdg_data.trim().is_empty() {
-            return PathBuf::from(xdg_data).join("screentime").join("logs");
-        }
-    }
-
-    default_home_dir()
-        .join(".local")
-        .join("share")
-        .join("screentime")
-        .join("logs")
+    default_data_dir().join("logs")
 }
 
 pub fn default_db_path() -> PathBuf {
