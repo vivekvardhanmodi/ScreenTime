@@ -158,6 +158,10 @@ impl SessionManager {
         self.current_window.as_ref()
     }
 
+    pub fn sync_current_window(&mut self, window: Option<WindowInfo>) {
+        self.current_window = window;
+    }
+
     pub fn current_effective_class(&self) -> Option<&str> {
         self.current_effective_class.as_deref()
     }
@@ -221,36 +225,65 @@ impl SessionManager {
         self.handle_shutdown(current_time()).await
     }
 
+    async fn maybe_reload_title_rules(&mut self, now: f64) {
+        if (now - self.last_rules_reload) > self.rules_ttl {
+            if let Ok(reloaded) = self.db.reload_title_rules().await {
+                self.title_rules = reloaded;
+                self.last_rules_reload = now;
+            }
+        }
+    }
+
+    async fn close_active_session(&mut self, end_time: f64) -> Result<(), DbError> {
+        if let Some(id) = self.current_session_id.take() {
+            self.db.close_session(id, end_time, self.min_duration).await?;
+        }
+        self.current_start_time = 0.0;
+        self.current_url = None;
+        self.current_effective_class = None;
+        self.last_heartbeat = 0.0;
+        Ok(())
+    }
+
+    async fn start_session(&mut self, win: WindowInfo, now: f64) -> Result<i64, DbError> {
+        self.maybe_reload_title_rules(now).await;
+
+        let effective_class = self
+            .title_rules
+            .resolve_app_class(&win.app_class, Some(&win.title));
+
+        let initial_url = if self.is_browser(&win.app_class) {
+            self.last_known_browser_url.clone()
+        } else {
+            None
+        };
+
+        let mut session = Session::new(now, now, effective_class.clone())
+            .with_title(win.title.clone())
+            .with_device_id(self.device_id.clone());
+
+        if let Some(ref u) = initial_url {
+            session = session.with_url(u.clone());
+        }
+
+        let new_id = self.db.insert_session(session).await?;
+        self.current_window = Some(win);
+        self.current_effective_class = Some(effective_class);
+        self.current_start_time = now;
+        self.current_url = initial_url;
+        self.current_session_id = Some(new_id);
+        self.last_heartbeat = now;
+
+        Ok(new_id)
+    }
+
     async fn resume_tracking_if_active(&mut self, now: f64) -> Result<(), DbError> {
         if !self.is_tracking_active() || self.current_session_id.is_some() {
             return Ok(());
         }
 
         if let Some(win) = self.current_window.clone() {
-            let effective_class = self
-                .title_rules
-                .resolve_app_class(&win.app_class, Some(&win.title));
-
-            self.current_effective_class = Some(effective_class.clone());
-            self.current_start_time = now;
-
-            let initial_url = if self.is_browser(&win.app_class) {
-                self.last_known_browser_url.clone()
-            } else {
-                None
-            };
-            self.current_url = initial_url.clone();
-
-            let mut session = Session::new(now, now, effective_class)
-                .with_title(win.title)
-                .with_device_id(self.device_id.clone());
-
-            if let Some(u) = initial_url {
-                session = session.with_url(u);
-            }
-
-            let new_id = self.db.insert_session(session).await?;
-            self.current_session_id = Some(new_id);
+            self.start_session(win, now).await?;
         }
 
         Ok(())
@@ -260,12 +293,7 @@ impl SessionManager {
         match event {
             SleepEvent::Sleep => {
                 self.is_sleeping = true;
-                if let Some(id) = self.current_session_id.take() {
-                    self.db.close_session(id, now, self.min_duration).await?;
-                }
-                self.current_start_time = 0.0;
-                self.current_url = None;
-                self.current_effective_class = None;
+                self.close_active_session(now).await?;
             }
             SleepEvent::Wake => {
                 self.is_sleeping = false;
@@ -279,12 +307,7 @@ impl SessionManager {
                 if has_external_display {
                     self.resume_tracking_if_active(now).await?;
                 } else {
-                    if let Some(id) = self.current_session_id.take() {
-                        self.db.close_session(id, now, self.min_duration).await?;
-                    }
-                    self.current_start_time = 0.0;
-                    self.current_url = None;
-                    self.current_effective_class = None;
+                    self.close_active_session(now).await?;
                 }
             }
             SleepEvent::LidOpened => {
@@ -310,53 +333,13 @@ impl SessionManager {
         }
 
         let Some(win) = window else {
-            if let Some(id) = self.current_session_id.take() {
-                self.db.close_session(id, now, self.min_duration).await?;
-            }
+            self.close_active_session(now).await?;
             self.current_window = None;
-            self.current_effective_class = None;
-            self.current_url = None;
-            self.current_start_time = 0.0;
             return Ok(None);
         };
 
-        if (now - self.last_rules_reload) > self.rules_ttl {
-            if let Ok(reloaded) = self.db.reload_title_rules().await {
-                self.title_rules = reloaded;
-                self.last_rules_reload = now;
-            }
-        }
-
-        let effective_class = self
-            .title_rules
-            .resolve_app_class(&win.app_class, Some(&win.title));
-
-        if let Some(id) = self.current_session_id.take() {
-            self.db.close_session(id, now, self.min_duration).await?;
-        }
-
-        self.current_window = Some(win.clone());
-        self.current_effective_class = Some(effective_class.clone());
-        self.current_start_time = now;
-
-        let initial_url = if self.is_browser(&win.app_class) {
-            self.last_known_browser_url.clone()
-        } else {
-            None
-        };
-        self.current_url = initial_url.clone();
-
-        let mut session = Session::new(now, now, effective_class)
-            .with_title(win.title)
-            .with_device_id(self.device_id.clone());
-
-        if let Some(u) = initial_url {
-            session = session.with_url(u);
-        }
-
-        let new_id = self.db.insert_session(session).await?;
-        self.current_session_id = Some(new_id);
-
+        self.close_active_session(now).await?;
+        let new_id = self.start_session(win, now).await?;
         Ok(Some(new_id))
     }
 
@@ -366,12 +349,7 @@ impl SessionManager {
                 let was_idle = self.is_idle;
                 self.is_idle = true;
                 if !was_idle {
-                    if let Some(id) = self.current_session_id.take() {
-                        self.db.close_session(id, now, self.min_duration).await?;
-                    }
-                    self.current_start_time = 0.0;
-                    self.current_url = None;
-                    self.current_effective_class = None;
+                    self.close_active_session(now).await?;
                 }
             }
             IdleState::Active => {
@@ -413,25 +391,24 @@ impl SessionManager {
         let Some(url) = update.url else {
             self.last_known_browser_url = None;
             if self.current_url.is_some() {
-                self.db
-                    .close_session(session_id, now, self.min_duration)
-                    .await?;
-
-                let win = self.current_window.as_ref().unwrap();
+                let win_clone = self.current_window.clone().unwrap();
                 let effective_class = self
                     .current_effective_class
                     .clone()
-                    .unwrap_or_else(|| win.app_class.clone());
+                    .unwrap_or_else(|| win_clone.app_class.clone());
 
-                self.current_start_time = now;
-                self.current_url = None;
+                self.close_active_session(now).await?;
 
-                let session = Session::new(now, now, effective_class)
-                    .with_title(win.title.clone())
+                let session = Session::new(now, now, effective_class.clone())
+                    .with_title(win_clone.title)
                     .with_device_id(self.device_id.clone());
 
                 let new_id = self.db.insert_session(session).await?;
+                self.current_effective_class = Some(effective_class);
+                self.current_start_time = now;
+                self.current_url = None;
                 self.current_session_id = Some(new_id);
+                self.last_heartbeat = now;
             }
             return Ok(());
         };
@@ -450,28 +427,26 @@ impl SessionManager {
                 .await?;
             self.current_url = Some(url);
         } else {
-            self.db
-                .close_session(session_id, now, self.min_duration)
-                .await?;
-
-            let win = self.current_window.as_ref().unwrap();
+            let win_clone = self.current_window.clone().unwrap();
             let effective_class = self
                 .current_effective_class
                 .clone()
-                .unwrap_or_else(|| win.app_class.clone());
+                .unwrap_or_else(|| win_clone.app_class.clone());
+            let title = update.title.unwrap_or(win_clone.title);
 
-            let title = update.title.unwrap_or_else(|| win.title.clone());
+            self.close_active_session(now).await?;
 
-            self.current_start_time = now;
-            self.current_url = Some(url.clone());
-
-            let session = Session::new(now, now, effective_class)
+            let session = Session::new(now, now, effective_class.clone())
                 .with_title(title)
-                .with_url(url)
+                .with_url(url.clone())
                 .with_device_id(self.device_id.clone());
 
             let new_id = self.db.insert_session(session).await?;
+            self.current_effective_class = Some(effective_class);
+            self.current_start_time = now;
+            self.current_url = Some(url);
             self.current_session_id = Some(new_id);
+            self.last_heartbeat = now;
         }
 
         Ok(())
@@ -496,43 +471,23 @@ impl SessionManager {
 
         let sleep_threshold = (self.heartbeat_interval.as_secs_f64() * 3.0).max(30.0);
         if self.last_heartbeat > 0.0 && (now - self.last_heartbeat) > sleep_threshold {
-            if let Some(id) = self.current_session_id.take() {
-                self.db
-                    .close_session(id, self.last_heartbeat, self.min_duration)
-                    .await?;
-            }
+            let prev_hb = self.last_heartbeat;
+            self.close_active_session(prev_hb).await?;
 
             if let Some(win) = self.current_window.clone() {
-                let effective_class = self
-                    .title_rules
-                    .resolve_app_class(&win.app_class, Some(&win.title));
-
-                self.current_effective_class = Some(effective_class.clone());
-                self.current_start_time = now;
-
-                let session = Session::new(now, now, effective_class)
-                    .with_title(win.title)
-                    .with_device_id(self.device_id.clone());
-
-                let new_id = self.db.insert_session(session).await?;
-                self.current_session_id = Some(new_id);
+                self.start_session(win, now).await?;
             }
         } else if let Some(id) = self.current_session_id {
             self.db.update_end_time(id, now).await?;
+            self.last_heartbeat = now;
         }
 
-        self.last_heartbeat = now;
         Ok(())
     }
 
     pub async fn handle_shutdown(&mut self, now: f64) -> Result<(), DbError> {
-        if let Some(id) = self.current_session_id.take() {
-            self.db.close_session(id, now, self.min_duration).await?;
-        }
-        self.current_start_time = 0.0;
-        self.current_url = None;
+        self.close_active_session(now).await?;
         self.current_window = None;
-        self.current_effective_class = None;
         Ok(())
     }
 
@@ -593,6 +548,14 @@ impl SessionManager {
                 }
                 Some(idle_state) = idle_rx.recv() => {
                     debug!("Idle state changed: {:?}", idle_state);
+                    let queried = if idle_state.is_active() && self.is_idle() {
+                        tracker.query_active_window().await.ok()
+                    } else {
+                        None
+                    };
+                    if let Some(active_win) = queried {
+                        self.sync_current_window(active_win);
+                    }
                     self.on_idle_change(idle_state).await?;
                 }
                 Some(url) = url_rx.recv() => {
@@ -609,6 +572,14 @@ impl SessionManager {
                     match sleep_event {
                         Some(event) => {
                             debug!("Sleep event received: {:?}", event);
+                            let queried = if matches!(event, SleepEvent::Wake | SleepEvent::LidOpened) {
+                                tracker.query_active_window().await.ok()
+                            } else {
+                                None
+                            };
+                            if let Some(active_win) = queried {
+                                self.sync_current_window(active_win);
+                            }
                             self.on_sleep_event(event).await?;
                         }
                         None => {

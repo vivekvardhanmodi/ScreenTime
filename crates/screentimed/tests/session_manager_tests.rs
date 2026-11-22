@@ -30,6 +30,10 @@ impl MockWindowTracker {
             let _ = tx.send(window).await;
         }
     }
+
+    async fn set_window_silently(&self, window: Option<WindowInfo>) {
+        *self.active_window.lock().await = window;
+    }
 }
 
 #[async_trait]
@@ -190,6 +194,50 @@ async fn test_idle_state_transitions() {
     assert_eq!(session2.app_class, "browser");
     assert_eq!(session2.start_time, 220.0);
     assert_eq!(session2.end_time, 225.0);
+}
+
+#[tokio::test]
+async fn test_heartbeat_after_long_idle_preserves_resumed_session() {
+    let dir = tempdir().expect("Failed to create tempdir");
+    let db_path = dir.path().join("test_idle_hb.db");
+    let db = DbActorHandle::spawn(&db_path).expect("Failed to spawn DbActor");
+
+    let mut sm = SessionManager::new(db.clone());
+    let browser = WindowInfo::new("google-chrome", "Google Chrome");
+
+    let id1 = sm
+        .handle_window_change(Some(browser), 100.0)
+        .await
+        .unwrap()
+        .unwrap();
+    sm.handle_browser_url("https://rust-lang.org".to_string(), 100.5)
+        .await
+        .unwrap();
+    sm.handle_heartbeat(105.0).await.unwrap();
+
+    sm.handle_idle_change(IdleState::Idle, 110.0).await.unwrap();
+    sm.handle_heartbeat(200.0).await.unwrap();
+
+    // Resume after >30s idle; first heartbeat must update the resumed session instead of deleting it
+    sm.handle_idle_change(IdleState::Active, 300.0)
+        .await
+        .unwrap();
+    let id2 = sm
+        .current_session_id()
+        .expect("Resumed session must exist");
+    assert_ne!(id1, id2);
+
+    sm.handle_heartbeat(310.0).await.unwrap();
+    assert_eq!(sm.current_session_id(), Some(id2));
+
+    let resumed = db
+        .get_session(id2)
+        .await
+        .unwrap()
+        .expect("Resumed session must not be deleted by first post-idle heartbeat");
+    assert_eq!(resumed.start_time, 300.0);
+    assert_eq!(resumed.end_time, 310.0);
+    assert_eq!(resumed.website_url.as_deref(), Some("https://rust-lang.org"));
 }
 
 #[tokio::test]
@@ -365,4 +413,50 @@ async fn test_event_loop_run_with_mocks() {
         Some("https://rust-lang.org")
     );
     assert_eq!(all_sessions[1].app_class, "alacritty");
+}
+
+#[tokio::test]
+async fn test_run_loop_requeries_active_window_on_idle_resume() {
+    let dir = tempdir().expect("Failed to create tempdir");
+    let db_path = dir.path().join("test_requery.db");
+    let db = DbActorHandle::spawn(&db_path).expect("Failed to spawn DbActor");
+
+    let tracker = MockWindowTracker::new(Some(WindowInfo::new("kitty", "initial")));
+    let tracker_clone = tracker.clone();
+
+    let idle_detector = MockIdleDetector::new(false);
+    let idle_clone = idle_detector.clone();
+
+    let (_url_tx, url_rx) = mpsc::channel::<String>(16);
+    let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+
+    let sm = SessionManager::new(db.clone()).with_min_duration(0.0);
+    let runner = tokio::spawn(async move {
+        sm.run_loop(tracker, idle_detector, url_rx, shutdown_rx)
+            .await
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    idle_clone.set_idle_state(IdleState::Idle).await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Window changed while idle without emitting a stream event
+    tracker_clone
+        .set_window_silently(Some(WindowInfo::new("code", "after-resume")))
+        .await;
+
+    idle_clone.set_idle_state(IdleState::Active).await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    shutdown_tx.send(()).await.unwrap();
+    runner.await.expect("Runner panicked").unwrap();
+
+    let sessions = db
+        .get_sessions_in_range(0.0, 2_000_000_000.0)
+        .await
+        .unwrap();
+    assert!(
+        sessions.iter().any(|s| s.app_class == "code"),
+        "Expected re-queried window 'code' after resume, got: {sessions:?}"
+    );
 }
