@@ -76,7 +76,14 @@ async fn test_cli_status_when_stopped() {
 
 #[tokio::test]
 async fn test_cli_status_when_running() {
-    let temp = tempdir().expect("tempdir");
+    let temp = if std::path::Path::new("/tmp").is_dir() {
+        tempfile::Builder::new()
+            .prefix("st_stat")
+            .tempdir_in("/tmp")
+            .unwrap_or_else(|_| tempdir().expect("tempdir"))
+    } else {
+        tempdir().expect("tempdir")
+    };
     let live_sock = temp.path().join("active.sock");
 
     let (url_tx, _url_rx) = mpsc::channel(16);
@@ -84,9 +91,10 @@ async fn test_cli_status_when_running() {
         .await
         .expect("Bind test IPC server");
 
-    let output = Command::new(CLI_BIN)
+    let output = tokio::process::Command::new(CLI_BIN)
         .args(["status", "--socket", live_sock.to_str().unwrap()])
         .output()
+        .await
         .expect("Failed to run status");
 
     assert!(output.status.success());
@@ -249,7 +257,14 @@ fn test_platform_auto_detect_all_environments() {
 
 #[tokio::test]
 async fn test_daemon_end_to_end_and_graceful_shutdown() {
-    let temp = tempdir().expect("tempdir");
+    let temp = if std::path::Path::new("/tmp").is_dir() {
+        tempfile::Builder::new()
+            .prefix("st_e2e")
+            .tempdir_in("/tmp")
+            .unwrap_or_else(|_| tempdir().expect("tempdir"))
+    } else {
+        tempdir().expect("tempdir")
+    };
     let db_path = temp.path().join("test_daemon.db");
     let sock_path = temp.path().join("daemon_test.sock");
     let his = "test_cli_instance_42";
