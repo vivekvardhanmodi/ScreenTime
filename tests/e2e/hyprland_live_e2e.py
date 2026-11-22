@@ -18,10 +18,15 @@ import sys
 import time
 from pathlib import Path
 
-USER_DB_PATH = Path("/home/vivek/.local/share/screentime/screentime.db")
+DATA_DIR = (
+    Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    / "screentime"
+)
+USER_DB_PATH = DATA_DIR / "screentime.db"
+RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
 TEST_DIR = Path("/tmp/screentime_test")
 TEST_DB_PATH = TEST_DIR / "test.db"
-SOCKET_PATH = Path(f"/run/user/{os.getuid()}/screentime/screentimed.sock")
+SOCKET_PATH = RUNTIME_DIR / "screentime" / "screentimed.sock"
 DAEMON_BIN = Path("./target/release/screentimed").resolve()
 
 spawned_pids = []
@@ -37,7 +42,7 @@ def compute_sha256(path: Path) -> str:
 
 def hypr_dispatch(cmd_str: str) -> str:
     his = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
-    sock_path = Path(f"/run/user/{os.getuid()}/hypr/{his}/.socket.sock")
+    sock_path = RUNTIME_DIR / "hypr" / his / ".socket.sock"
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
         s.connect(str(sock_path))
         s.sendall(f"dispatch {cmd_str}".encode("utf-8"))
@@ -48,7 +53,7 @@ def hypr_dispatch(cmd_str: str) -> str:
 
 def hypr_active() -> dict:
     his = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
-    sock_path = Path(f"/run/user/{os.getuid()}/hypr/{his}/.socket.sock")
+    sock_path = RUNTIME_DIR / "hypr" / his / ".socket.sock"
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
         s.connect(str(sock_path))
         s.sendall(b"j/activewindow")
@@ -66,7 +71,7 @@ def hypr_active() -> dict:
 
 def hypr_clients() -> list:
     his = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
-    sock_path = Path(f"/run/user/{os.getuid()}/hypr/{his}/.socket.sock")
+    sock_path = RUNTIME_DIR / "hypr" / his / ".socket.sock"
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
         s.connect(str(sock_path))
         s.sendall(b"j/clients")
@@ -590,7 +595,7 @@ def run_tests():
     assert integrity[0]["integrity_check"] == "ok", (
         f"Integrity check failed: {integrity}"
     )
-    print(f"[PROOF] SQLite database PRAGMA integrity_check: ok")
+    print("[PROOF] SQLite database PRAGMA integrity_check: ok")
 
     # Dump session summary for report
     all_sessions = query_db(
