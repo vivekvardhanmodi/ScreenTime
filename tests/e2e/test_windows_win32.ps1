@@ -1,6 +1,6 @@
 # Windows Win32 Desktop Protocol End-to-End Test Harness
 # Launches screentimed on Windows with win32 hooks, spawns real
-# Win32 desktop applications (notepad.exe, powershell.exe), switches
+# Win32 desktop applications (notepad.exe, cmd.exe), switches
 # foreground focus, and asserts SQLite database output.
 
 $ErrorActionPreference = "Stop"
@@ -165,10 +165,10 @@ if len(rows) < 1:
     sys.exit(1)
 
 classes = [str(r[3]).lower() for r in rows]
-has_target = any("notepad" in c or "cmd" in c or "powershell" in c for c in classes)
+has_target = any("notepad" in c or "cmd" in c for c in classes)
 
 if not has_target:
-    print(f"ERROR: Expected test application in recorded classes: {classes}", file=sys.stderr)
+    print(f"ERROR: Expected notepad or cmd in recorded classes: {classes}", file=sys.stderr)
     sys.exit(1)
 
 for r in rows:

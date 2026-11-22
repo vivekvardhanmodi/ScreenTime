@@ -1,7 +1,7 @@
 #![cfg(target_os = "windows")]
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -39,7 +39,25 @@ const GUID_CONSOLE_DISPLAY_STATE: windows_sys::core::GUID = windows_sys::core::G
 
 const WM_QUIT: u32 = 0x0012;
 
-static GLOBAL_TX: Mutex<Option<UnboundedSender<PlatformEvent>>> = Mutex::new(None);
+struct ListenerBusState {
+    next_id: u64,
+    thread_id: Option<u32>,
+    subscribers: Vec<(u64, UnboundedSender<PlatformEvent>)>,
+}
+
+static LISTENER_BUS: Mutex<ListenerBusState> = Mutex::new(ListenerBusState {
+    next_id: 1,
+    thread_id: None,
+    subscribers: Vec::new(),
+});
+
+fn broadcast_event(event: PlatformEvent) {
+    if let Ok(mut state) = LISTENER_BUS.lock() {
+        state
+            .subscribers
+            .retain(|(_, tx)| tx.send(event.clone()).is_ok());
+    }
+}
 
 #[inline]
 fn guid_eq(a: &windows_sys::core::GUID, b: &windows_sys::core::GUID) -> bool {
@@ -59,13 +77,8 @@ unsafe extern "system" fn win_event_proc(
         return;
     }
 
-    let guard = GLOBAL_TX.lock().ok();
-    let Some(ref tx) = guard.as_deref().and_then(|g| g.as_ref()) else {
-        return;
-    };
-
     if hwnd.is_null() {
-        let _ = tx.send(PlatformEvent::WindowChanged(None));
+        broadcast_event(PlatformEvent::WindowChanged(None));
         return;
     }
 
@@ -76,9 +89,10 @@ unsafe extern "system" fn win_event_proc(
         Err(_) => "unknown".to_string(),
     };
 
-    let info = WindowInfo { app_class, title };
-
-    let _ = tx.send(PlatformEvent::WindowChanged(Some(info)));
+    broadcast_event(PlatformEvent::WindowChanged(Some(WindowInfo {
+        app_class,
+        title,
+    })));
 }
 
 unsafe extern "system" fn wnd_proc(
@@ -94,29 +108,17 @@ unsafe extern "system" fn wnd_proc(
                 if guid_eq(&setting.PowerSetting, &GUID_CONSOLE_DISPLAY_STATE) {
                     let state = *(setting.Data.as_ptr() as *const u32);
                     if let Some(event) = parse_display_power_state(state) {
-                        if let Ok(guard) = GLOBAL_TX.lock() {
-                            if let Some(ref tx) = *guard {
-                                let _ = tx.send(event);
-                            }
-                        }
+                        broadcast_event(event);
                     }
                 }
             } else if let Some(event) = parse_power_broadcast(wparam) {
-                if let Ok(guard) = GLOBAL_TX.lock() {
-                    if let Some(ref tx) = *guard {
-                        let _ = tx.send(event);
-                    }
-                }
+                broadcast_event(event);
             }
             1
         }
         WM_WTSSESSION_CHANGE => {
             if let Some(event) = parse_session_change_event(wparam) {
-                if let Ok(guard) = GLOBAL_TX.lock() {
-                    if let Some(ref tx) = *guard {
-                        let _ = tx.send(event);
-                    }
-                }
+                broadcast_event(event);
             }
             0
         }
@@ -125,34 +127,59 @@ unsafe extern "system" fn wnd_proc(
 }
 
 pub struct Win32ListenerHandle {
-    thread_id: u32,
-    running: Arc<AtomicBool>,
+    id: u64,
+    stopped: AtomicBool,
 }
 
 impl Win32ListenerHandle {
     pub fn stop(&self) {
-        self.running.store(false, Ordering::SeqCst);
-        unsafe {
-            PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0);
+        if self.stopped.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let thread_to_quit = if let Ok(mut state) = LISTENER_BUS.lock() {
+            state.subscribers.retain(|(id, _)| *id != self.id);
+            if state.subscribers.is_empty() {
+                state.thread_id.take()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(thread_id) = thread_to_quit {
+            unsafe {
+                PostThreadMessageW(thread_id, WM_QUIT, 0, 0);
+            }
         }
     }
 }
 
+impl Drop for Win32ListenerHandle {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 pub fn spawn_win32_listener(event_tx: UnboundedSender<PlatformEvent>) -> Win32ListenerHandle {
-    let running = Arc::new(AtomicBool::new(true));
-    let running_clone = running.clone();
+    let mut state = LISTENER_BUS.lock().expect("Win32 listener mutex poisoned");
+    let id = state.next_id;
+    state.next_id += 1;
+    state.subscribers.push((id, event_tx));
+
+    if state.thread_id.is_some() {
+        return Win32ListenerHandle {
+            id,
+            stopped: AtomicBool::new(false),
+        };
+    }
 
     let (tid_tx, tid_rx) = std::sync::mpsc::channel();
 
     std::thread::spawn(move || {
         let thread_id = unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() };
-        let _ = tid_tx.send(thread_id);
 
         unsafe {
-            if let Ok(mut guard) = GLOBAL_TX.lock() {
-                *guard = Some(event_tx);
-            }
-
             let h_instance = GetModuleHandleW(std::ptr::null());
             let class_name = windows_sys::w!("ScreentimeMsgClass");
 
@@ -204,6 +231,8 @@ pub fn spawn_win32_listener(event_tx: UnboundedSender<PlatformEvent>) -> Win32Li
                 WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
             );
 
+            let _ = tid_tx.send(thread_id);
+
             let mut msg: MSG = std::mem::zeroed();
             while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
                 TranslateMessage(&msg);
@@ -220,16 +249,20 @@ pub fn spawn_win32_listener(event_tx: UnboundedSender<PlatformEvent>) -> Win32Li
             if !hwnd.is_null() {
                 DestroyWindow(hwnd);
             }
+        }
 
-            if let Ok(mut guard) = GLOBAL_TX.lock() {
-                *guard = None;
+        if let Ok(mut guard) = LISTENER_BUS.lock() {
+            if guard.thread_id == Some(thread_id) {
+                guard.thread_id = None;
             }
         }
     });
 
     let thread_id = tid_rx.recv().expect("Failed to receive thread ID");
+    state.thread_id = Some(thread_id);
+
     Win32ListenerHandle {
-        thread_id,
-        running: running_clone,
+        id,
+        stopped: AtomicBool::new(false),
     }
 }
