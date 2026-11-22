@@ -117,27 +117,18 @@ fn test_parse_dpms_event_and_line() {
 #[test]
 fn test_parse_monitors_json() {
     let on_json = br#"[{"name":"DP-1","dpmsStatus":true}]"#;
-    assert_eq!(
-        parse_monitors_json(on_json).unwrap(),
-        Some(IdleState::Active)
-    );
+    assert_eq!(parse_monitors_json(on_json).unwrap(), Some(IdleState::Active));
 
     let off_json = br#"[{"name":"DP-1","dpmsStatus":false}]"#;
     assert_eq!(parse_monitors_json(off_json).unwrap(), Some(IdleState::Idle));
 
     let multi_one_on =
         br#"[{"name":"DP-1","dpmsStatus":false},{"name":"HDMI-1","dpmsStatus":true}]"#;
-    assert_eq!(
-        parse_monitors_json(multi_one_on).unwrap(),
-        Some(IdleState::Active)
-    );
+    assert_eq!(parse_monitors_json(multi_one_on).unwrap(), Some(IdleState::Active));
 
     let multi_both_off =
         br#"[{"name":"DP-1","dpmsStatus":false},{"name":"HDMI-1","dpmsStatus":false}]"#;
-    assert_eq!(
-        parse_monitors_json(multi_both_off).unwrap(),
-        Some(IdleState::Idle)
-    );
+    assert_eq!(parse_monitors_json(multi_both_off).unwrap(), Some(IdleState::Idle));
 
     // Empty monitor responses represent transient reconfiguration, not confirmed idle
     assert_eq!(parse_monitors_json(b"[]").unwrap(), None);

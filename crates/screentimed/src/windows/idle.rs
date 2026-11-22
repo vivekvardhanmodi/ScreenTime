@@ -248,12 +248,11 @@ impl IdleDetector for WindowsIdleDetector {
             let listener_handle = super::listener::spawn_win32_listener(event_tx);
             self.listener_handle = Some(listener_handle);
 
-            let idle_duration_fn: IdleDurationFn = Box::new(|| {
-                match super::win32_utils::get_idle_time_millis() {
+            let idle_duration_fn: IdleDurationFn =
+                Box::new(|| match super::win32_utils::get_idle_time_millis() {
                     Ok(ms) => Duration::from_millis(ms as u64),
                     Err(_) => Duration::ZERO,
-                }
-            });
+                });
 
             self.join_handle = Some(spawn_idle_loop(
                 Some(event_rx),

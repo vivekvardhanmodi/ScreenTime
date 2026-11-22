@@ -465,18 +465,19 @@ impl IdleDetector for WaylandIdleDetector {
                 }
 
                 match Connection::connect_to_env() {
-                    Ok(new_conn) => {
-                        match setup_idle_session(&new_conn, timeout_ms, Arc::clone(&is_idle_atomic))
-                        {
-                            Ok((new_queue, new_state)) => {
-                                info!("Reconnected Wayland idle detector to compositor");
-                                active = Some((new_conn, new_queue, new_state));
-                            }
-                            Err(e) => {
-                                debug!("Wayland idle reconnect setup failed: {e}");
-                            }
+                    Ok(new_conn) => match setup_idle_session(
+                        &new_conn,
+                        timeout_ms,
+                        Arc::clone(&is_idle_atomic),
+                    ) {
+                        Ok((new_queue, new_state)) => {
+                            info!("Reconnected Wayland idle detector to compositor");
+                            active = Some((new_conn, new_queue, new_state));
                         }
-                    }
+                        Err(e) => {
+                            debug!("Wayland idle reconnect setup failed: {e}");
+                        }
+                    },
                     Err(e) => {
                         debug!("Wayland idle reconnect failed: {e}");
                     }
