@@ -2,10 +2,10 @@ use super::common::evaluate_idle_state;
 use async_trait::async_trait;
 use screentime_core::{IdleDetector, IdleState, TrackerError};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot, watch};
+use std::time::Duration;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 use x11rb::connection::Connection;
 use x11rb::protocol::screensaver;
@@ -17,7 +17,7 @@ pub struct X11IdleDetector {
     idle_threshold: Duration,
     poll_interval: Duration,
     is_idle: Arc<AtomicBool>,
-    stop_tx: Option<watch::Sender<bool>>,
+    stop_signal: Option<Arc<(Mutex<bool>, Condvar)>>,
     join_handle: Option<JoinHandle<()>>,
 }
 
@@ -35,7 +35,7 @@ impl X11IdleDetector {
             idle_threshold: Duration::from_secs(120),
             poll_interval: Duration::from_secs(1),
             is_idle: Arc::new(AtomicBool::new(false)),
-            stop_tx: None,
+            stop_signal: None,
             join_handle: None,
         }
     }
@@ -78,6 +78,16 @@ impl X11IdleDetector {
         self.join_handle.is_some()
     }
 
+    fn signal_stop(&mut self) {
+        if let Some(signal) = self.stop_signal.take() {
+            let (lock, cvar) = &*signal;
+            if let Ok(mut stopped) = lock.lock() {
+                *stopped = true;
+                cvar.notify_all();
+            }
+        }
+    }
+
     /// Query the current user idle duration from the X server in a one-off query.
     /// If the `MIT-SCREEN-SAVER` extension is unsupported, returns `Duration::ZERO`.
     pub async fn query_idle_duration(&self) -> Result<Duration, TrackerError> {
@@ -88,7 +98,6 @@ impl X11IdleDetector {
             let screen = &conn.setup().roots[screen_num];
             let root = screen.root;
 
-            // Check whether XScreenSaver extension is supported
             let has_screensaver = match screensaver::query_version(&conn, 1, 1) {
                 Ok(cookie) => cookie.reply().is_ok(),
                 Err(_) => false,
@@ -151,9 +160,7 @@ impl X11IdleDetector {
 
 impl Drop for X11IdleDetector {
     fn drop(&mut self) {
-        if let Some(stop_tx) = self.stop_tx.take() {
-            let _ = stop_tx.send(true);
-        }
+        self.signal_stop();
         if let Some(handle) = self.join_handle.take() {
             let _ = handle.join();
         }
@@ -167,9 +174,9 @@ impl IdleDetector for X11IdleDetector {
             return Ok(());
         }
 
-        let (stop_tx, stop_rx) = watch::channel(false);
+        let stop_signal = Arc::new((Mutex::new(false), Condvar::new()));
         let (init_tx, init_rx) = oneshot::channel();
-        self.stop_tx = Some(stop_tx);
+        self.stop_signal = Some(Arc::clone(&stop_signal));
 
         let display = self.display.clone();
         let idle_threshold = self.idle_threshold;
@@ -185,7 +192,7 @@ impl IdleDetector for X11IdleDetector {
                     poll_interval,
                     tx,
                     is_idle,
-                    stop_rx,
+                    stop_signal,
                     init_tx,
                 );
             })
@@ -213,9 +220,7 @@ impl IdleDetector for X11IdleDetector {
     }
 
     async fn stop(&mut self) -> Result<(), TrackerError> {
-        if let Some(stop_tx) = self.stop_tx.take() {
-            let _ = stop_tx.send(true);
-        }
+        self.signal_stop();
         if let Some(handle) = self.join_handle.take() {
             let _ = handle.join();
         }
@@ -233,7 +238,7 @@ fn run_idle_loop(
     poll_interval: Duration,
     tx: mpsc::Sender<IdleState>,
     is_idle: Arc<AtomicBool>,
-    stop_rx: watch::Receiver<bool>,
+    stop_signal: Arc<(Mutex<bool>, Condvar)>,
     init_tx: oneshot::Sender<Result<(), TrackerError>>,
 ) {
     let (conn, screen_num) = match RustConnection::connect(display.as_deref()) {
@@ -299,17 +304,25 @@ fn run_idle_loop(
     let _ = init_tx.send(Ok(()));
     info!("X11 idle detector loop initialized successfully");
 
-    let mut last_poll = Instant::now();
-
-    while !*stop_rx.borrow() {
-        thread::sleep(Duration::from_millis(50));
-
-        if *stop_rx.borrow() {
+    let (lock, cvar) = &*stop_signal;
+    loop {
+        let guard = match lock.lock() {
+            Ok(g) => g,
+            Err(_) => break,
+        };
+        if *guard {
             break;
         }
 
-        if has_screensaver && last_poll.elapsed() >= poll_interval {
-            last_poll = Instant::now();
+        if has_screensaver {
+            let (guard, _) = match cvar.wait_timeout_while(guard, poll_interval, |s| !*s) {
+                Ok(res) => res,
+                Err(_) => break,
+            };
+            if *guard {
+                break;
+            }
+            drop(guard);
 
             if let Ok(cookie) = screensaver::query_info(&conn, root) {
                 if let Ok(reply) = cookie.reply() {
@@ -325,6 +338,9 @@ fn run_idle_loop(
                     }
                 }
             }
+        } else {
+            let _ = cvar.wait_while(guard, |s| !*s);
+            break;
         }
     }
 

@@ -192,6 +192,13 @@ pub fn watch_window(conn: &RustConnection, window: Window) {
     let _ = conn.flush();
 }
 
+/// Unsubscribe from property change events on a previously focused window.
+pub fn unwatch_window(conn: &RustConnection, window: Window) {
+    let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT);
+    let _ = conn.change_window_attributes(window, &aux);
+    let _ = conn.flush();
+}
+
 /// Evaluate user idle state based on milliseconds since user input, screensaver state, and threshold.
 pub fn evaluate_idle_state(
     ms_since_user_input: u32,
