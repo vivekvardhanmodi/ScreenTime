@@ -4,6 +4,8 @@ Rich terminal interface for viewing screen time statistics,
 managing categories, and exporting data.
 """
 
+from pathlib import Path
+
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import (
@@ -13,6 +15,7 @@ from textual.widgets import (
     TabPane,
 )
 
+from screentime.config import get_theme, save_theme
 from screentime.database import Database
 from screentime.tui.dashboard import DashboardPane
 from screentime.tui.history import DailyPane, WeeklyPane, MonthlyPane
@@ -217,12 +220,24 @@ class ScreenTimeApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
+        Binding("t", "change_theme", "Theme"),
         Binding("d", "show_tab('tab-today')", "Today", show=False),
     ]
 
-    def __init__(self):
+    def __init__(self, db: Database | None = None, config_path: Path | None = None):
         super().__init__()
-        self.db = Database()
+        self.config_path = config_path
+        self.db = db or Database()
+        theme = get_theme(self.config_path)
+        self.theme = theme if theme in self.available_themes else "textual-dark"
+
+    def watch_theme(self, theme: str) -> None:
+        if not self.is_running:
+            return
+        try:
+            save_theme(theme, path=self.config_path)
+        except OSError:
+            pass
 
     def compose(self) -> ComposeResult:
         yield Header()
