@@ -16,19 +16,24 @@ pub fn current_time() -> f64 {
         .as_secs_f64()
 }
 
+fn browser_family_from_tokens(lower: &str) -> Option<&'static str> {
+    for token in lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+    {
+        match token {
+            "firefox" | "zen" | "waterfox" | "librewolf" | "floorp" => return Some("firefox"),
+            "chrome" | "chromium" | "googlechrome" | "brave" | "vivaldi" | "opera" | "edge"
+            | "msedge" => return Some("chrome"),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Helper to determine if an application class corresponds to a known web browser.
 pub fn is_browser_app(app_class: &str) -> bool {
-    let lower = app_class.to_lowercase();
-    lower.contains("chrome")
-        || lower.contains("chromium")
-        || lower.contains("firefox")
-        || lower.contains("brave")
-        || lower.contains("vivaldi")
-        || lower.contains("opera")
-        || lower.contains("edge")
-        || lower.contains("zen")
-        || lower.contains("waterfox")
-        || lower.contains("librewolf")
+    browser_family_from_tokens(&app_class.to_lowercase()).is_some()
 }
 
 pub struct SessionManager {
@@ -41,6 +46,7 @@ pub struct SessionManager {
     current_start_time: f64,
     current_window: Option<WindowInfo>,
     current_effective_class: Option<String>,
+    current_title: Option<String>,
     current_url: Option<String>,
     is_idle: bool,
     is_sleeping: bool,
@@ -67,6 +73,7 @@ impl SessionManager {
             current_start_time: 0.0,
             current_window: None,
             current_effective_class: None,
+            current_title: None,
             current_url: None,
             is_idle: false,
             is_sleeping: false,
@@ -147,25 +154,12 @@ impl SessionManager {
         let chrome_lower = self.chrome_window_class.to_lowercase();
         let firefox_lower = self.firefox_window_class.to_lowercase();
 
-        if (!firefox_lower.is_empty() && lower.contains(&firefox_lower))
-            || lower.contains("firefox")
-            || lower.contains("waterfox")
-            || lower.contains("librewolf")
-            || lower.contains("zen")
-            || lower.contains("floorp")
-        {
+        if !firefox_lower.is_empty() && lower.contains(&firefox_lower) {
             Some("firefox")
-        } else if (!chrome_lower.is_empty() && lower.contains(&chrome_lower))
-            || lower.contains("chrome")
-            || lower.contains("chromium")
-            || lower.contains("brave")
-            || lower.contains("vivaldi")
-            || lower.contains("opera")
-            || lower.contains("edge")
-        {
+        } else if !chrome_lower.is_empty() && lower.contains(&chrome_lower) {
             Some("chrome")
         } else {
-            None
+            browser_family_from_tokens(&lower)
         }
     }
 
@@ -190,7 +184,7 @@ impl SessionManager {
     }
 
     pub fn is_browser(&self, app_class: &str) -> bool {
-        self.browser_family_for_class(app_class).is_some() || is_browser_app(app_class)
+        self.browser_family_for_class(app_class).is_some()
     }
 
     pub fn current_session_id(&self) -> Option<i64> {
@@ -283,6 +277,7 @@ impl SessionManager {
         }
         self.current_start_time = 0.0;
         self.current_url = None;
+        self.current_title = None;
         self.current_effective_class = None;
         self.last_heartbeat = 0.0;
         Ok(())
@@ -313,6 +308,7 @@ impl SessionManager {
         }
 
         let new_id = self.db.insert_session(session).await?;
+        self.current_title = Some(win.title.clone());
         self.current_window = Some(win);
         self.current_effective_class = Some(effective_class);
         self.current_start_time = now;
@@ -456,11 +452,12 @@ impl SessionManager {
                 self.close_active_session(now).await?;
 
                 let session = Session::new(now, now, effective_class.clone())
-                    .with_title(win_clone.title)
+                    .with_title(win_clone.title.clone())
                     .with_device_id(self.device_id.clone());
 
                 let new_id = self.db.insert_session(session).await?;
                 self.current_effective_class = Some(effective_class);
+                self.current_title = Some(win_clone.title);
                 self.current_start_time = now;
                 self.current_url = None;
                 self.current_session_id = Some(new_id);
@@ -471,19 +468,33 @@ impl SessionManager {
 
         self.store_browser_url(cache_key, Some(url.clone()));
 
+        let trimmed_title = update
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(ToString::to_string);
+
         if self.current_url.as_deref() == Some(&url) {
+            if let Some(title) = trimmed_title {
+                if self.current_title.as_deref() != Some(title.as_str()) {
+                    self.db
+                        .update_session_title(session_id, title.clone())
+                        .await?;
+                    self.current_title = Some(title);
+                }
+            }
             return Ok(());
         }
 
         let elapsed = now - self.current_start_time;
 
         if elapsed <= 2.0 && self.current_url.is_none() {
-            if let Some(ref title) = update.title {
-                if !title.trim().is_empty() {
-                    self.db
-                        .update_session_title(session_id, title.clone())
-                        .await?;
-                }
+            if let Some(title) = trimmed_title {
+                self.db
+                    .update_session_title(session_id, title.clone())
+                    .await?;
+                self.current_title = Some(title);
             }
             self.db
                 .update_website_url(session_id, Some(url.clone()))
@@ -495,20 +506,18 @@ impl SessionManager {
                 .current_effective_class
                 .clone()
                 .unwrap_or_else(|| win_clone.app_class.clone());
-            let title = update
-                .title
-                .filter(|t| !t.trim().is_empty())
-                .unwrap_or(win_clone.title);
+            let title = trimmed_title.unwrap_or(win_clone.title);
 
             self.close_active_session(now).await?;
 
             let session = Session::new(now, now, effective_class.clone())
-                .with_title(title)
+                .with_title(title.clone())
                 .with_url(url.clone())
                 .with_device_id(self.device_id.clone());
 
             let new_id = self.db.insert_session(session).await?;
             self.current_effective_class = Some(effective_class);
+            self.current_title = Some(title);
             self.current_start_time = now;
             self.current_url = Some(url);
             self.current_session_id = Some(new_id);

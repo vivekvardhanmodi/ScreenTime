@@ -3,7 +3,7 @@ use screentime_core::{
     DbActorHandle, IdleDetector, IdleState, TitleRulesCache, TrackerError, UrlUpdate, WindowInfo,
     WindowTracker,
 };
-use screentimed::SessionManager;
+use screentimed::{is_browser_app, SessionManager};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -90,6 +90,30 @@ impl IdleDetector for MockIdleDetector {
         *self.tx.lock().await = None;
         Ok(())
     }
+}
+
+#[test]
+fn test_browser_app_detection_avoids_substring_false_positives() {
+    assert!(is_browser_app("google-chrome"));
+    assert!(is_browser_app("chrome.exe"));
+    assert!(is_browser_app(
+        "chrome-agimnkijcaahngcdmfeangaknmldooml-Default"
+    ));
+    assert!(is_browser_app("org.chromium.Chromium"));
+    assert!(is_browser_app("firefox"));
+    assert!(is_browser_app("org.mozilla.firefox"));
+    assert!(is_browser_app("zen-browser"));
+    assert!(is_browser_app("app.zen_browser.zen"));
+    assert!(is_browser_app("microsoft-edge-stable"));
+    assert!(is_browser_app("msedge.exe"));
+    assert!(is_browser_app("opera.exe"));
+    assert!(is_browser_app("brave-browser"));
+
+    assert!(!is_browser_app("zenity"));
+    assert!(!is_browser_app("ledger"));
+    assert!(!is_browser_app("knowledge-base"));
+    assert!(!is_browser_app("cooperative"));
+    assert!(!is_browser_app("alacritty"));
 }
 
 #[tokio::test]
@@ -340,14 +364,11 @@ async fn test_multi_browser_url_isolation() {
         .unwrap();
 
     let firefox_row = db.get_session(firefox_id).await.unwrap().unwrap();
-    assert_eq!(
-        firefox_row.website_url.as_deref(),
-        Some("https://mozilla.org")
-    );
+    assert_eq!(firefox_row.website_url.as_deref(), Some("https://mozilla.org"));
 }
 
 #[tokio::test]
-async fn test_pwa_url_update_writes_tab_title() {
+async fn test_pwa_url_update_writes_and_updates_tab_title() {
     let dir = tempdir().expect("Failed to create tempdir");
     let db_path = dir.path().join("test_pwa_title.db");
     let db = DbActorHandle::spawn(&db_path).expect("Failed to spawn DbActor");
@@ -373,13 +394,26 @@ async fn test_pwa_url_update_writes_tab_title() {
     .unwrap();
 
     let row = db.get_session(session_id).await.unwrap().unwrap();
+    assert_eq!(row.app_title.as_deref(), Some("Rust Async Deep Dive - YouTube"));
+    assert_eq!(row.website_url.as_deref(), Some("https://www.youtube.com/watch?v=abc123"));
+
+    // Same URL with updated SPA/PWA document title must update the title in-place
+    sm.handle_url_update(
+        UrlUpdate::new(
+            "chrome",
+            Some("https://www.youtube.com/watch?v=abc123".to_string()),
+            Some("(2) Rust Async Deep Dive - YouTube".to_string()),
+        ),
+        505.0,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(sm.current_session_id(), Some(session_id));
+    let updated_row = db.get_session(session_id).await.unwrap().unwrap();
     assert_eq!(
-        row.app_title.as_deref(),
-        Some("Rust Async Deep Dive - YouTube")
-    );
-    assert_eq!(
-        row.website_url.as_deref(),
-        Some("https://www.youtube.com/watch?v=abc123")
+        updated_row.app_title.as_deref(),
+        Some("(2) Rust Async Deep Dive - YouTube")
     );
 }
 
