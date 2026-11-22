@@ -1,97 +1,20 @@
 use std::path::{Path, PathBuf};
 
+pub const DEFAULT_SERVICE_NAME: &str = "org.screentime.Daemon";
+pub const DEFAULT_OBJECT_PATH: &str = "/org/screentime/Tracker";
+pub const DEFAULT_INTERFACE_NAME: &str = "org.screentime.Tracker";
+
 pub const DEFAULT_KWIN_SCRIPT: &str = include_str!("kwin_tracker.js");
 
-pub fn generate_kwin_script(service_name: &str, object_path: &str, interface_name: &str) -> String {
-    format!(
-        r#"// screentime_kwin_tracker.js
-// Polyfill and event listener for KDE Plasma 5 & 6
-
-var isPlasma6 = (typeof workspace.windowActivated !== "undefined");
-
-function getActiveWindow() {{
-    return isPlasma6 ? workspace.activeWindow : workspace.activeClient;
-}}
-
-var currentTrackedWindow = null;
-
-function notifyChange(win) {{
-    if (!win) {{
-        callDBus(
-            "{service_name}",
-            "{object_path}",
-            "{interface_name}",
-            "WindowChanged",
-            "",
-            "",
-            function() {{}}
-        );
-        return;
-    }}
-
-    // resourceClass corresponds to app_id on Wayland and WM_CLASS on XWayland.
-    // Fall back to desktopFileName or resourceName if resourceClass is empty.
-    var appClass = win.resourceClass || win.desktopFileName || win.resourceName || "";
-    var title = win.caption || "";
-
-    callDBus(
-        "{service_name}",
-        "{object_path}",
-        "{interface_name}",
-        "WindowChanged",
-        String(appClass),
-        String(title),
-        function() {{}}
-    );
-}}
-
-function onCaptionChanged() {{
-    var win = getActiveWindow();
-    notifyChange(win);
-}}
-
-function onWindowActivated(win) {{
-    // Unhook previous caption listener if needed
-    if (currentTrackedWindow && typeof currentTrackedWindow.captionChanged !== "undefined") {{
-        try {{
-            currentTrackedWindow.captionChanged.disconnect(onCaptionChanged);
-        }} catch (e) {{
-            // Safe to ignore if already disconnected
-        }}
-    }}
-
-    currentTrackedWindow = win;
-
-    if (win) {{
-        if (typeof win.captionChanged !== "undefined") {{
-            try {{
-                win.captionChanged.connect(onCaptionChanged);
-            }} catch (e) {{
-                // Ignore connection errors on exotic surfaces
-            }}
-        }}
-        notifyChange(win);
-    }} else {{
-        notifyChange(null);
-    }}
-}}
-
-// Register window activation listener
-if (isPlasma6) {{
-    workspace.windowActivated.connect(onWindowActivated);
-}} else {{
-    workspace.clientActivated.connect(onWindowActivated);
-}}
-
-// Initial notification for the currently focused window on startup
-var initial = getActiveWindow();
-if (initial) {{
-    onWindowActivated(initial);
-}} else {{
-    notifyChange(null);
-}}
-"#
-    )
+pub fn generate_kwin_script(
+    service_name: &str,
+    object_path: &str,
+    interface_name: &str,
+) -> String {
+    DEFAULT_KWIN_SCRIPT
+        .replace(DEFAULT_SERVICE_NAME, service_name)
+        .replace(DEFAULT_OBJECT_PATH, object_path)
+        .replace(DEFAULT_INTERFACE_NAME, interface_name)
 }
 
 pub fn resolve_kwin_script_path(custom_dir: Option<&Path>, filename: Option<&str>) -> PathBuf {
@@ -114,9 +37,9 @@ mod tests {
     #[test]
     fn test_default_script_matches_generated() {
         let generated = generate_kwin_script(
-            "org.screentime.Daemon",
-            "/org/screentime/Tracker",
-            "org.screentime.Tracker",
+            DEFAULT_SERVICE_NAME,
+            DEFAULT_OBJECT_PATH,
+            DEFAULT_INTERFACE_NAME,
         );
         assert_eq!(DEFAULT_KWIN_SCRIPT, generated);
     }
