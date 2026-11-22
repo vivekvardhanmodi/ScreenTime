@@ -146,6 +146,7 @@ jobs:
               cd /build
               
               echo '=== Executing install.sh ==='
+              chmod +x ./install.sh
               ./install.sh
               
               echo '=== Validating installed binaries and manifests ==='
