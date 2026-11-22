@@ -22,7 +22,7 @@ pub fn resolve_socket_name() -> io::Result<Name<'static>> {
 
 pub async fn run_host<R, W>(
     mut reader: R,
-    writer: W,
+    mut writer: W,
     socket_name: Name<'static>,
 ) -> (io::Result<()>, W)
 where
@@ -76,47 +76,41 @@ where
         }
     });
 
-    let writer = std::sync::Arc::new(std::sync::Mutex::new(writer));
-    let writer_clone = std::sync::Arc::clone(&writer);
-
-    let read_task = tokio::task::spawn_blocking(move || -> io::Result<()> {
-        while let Some(msg) = read_length_prefixed::<_, BrowserExtensionMessage>(&mut reader)? {
-            let mut w = writer_clone
-                .lock()
-                .map_err(|e| io::Error::other(e.to_string()))?;
-            match msg {
-                BrowserExtensionMessage::UrlUpdate {
-                    browser_type,
-                    url,
-                    title,
-                } => {
-                    let update = UrlUpdate::new(browser_type, url, title);
-                    let _ = tx.blocking_send(update);
-                    write_length_prefixed(&mut *w, &HostExtensionResponse::Ok)?;
-                }
-                BrowserExtensionMessage::Ping => {
-                    write_length_prefixed(&mut *w, &HostExtensionResponse::Pong)?;
-                }
-                BrowserExtensionMessage::Unknown => {
-                    write_length_prefixed(
-                        &mut *w,
-                        &HostExtensionResponse::Error {
-                            message: "Unknown message type".to_string(),
-                        },
-                    )?;
+    let read_task = tokio::task::spawn_blocking(move || -> (io::Result<()>, W) {
+        let result = (|| -> io::Result<()> {
+            while let Some(msg) = read_length_prefixed::<_, BrowserExtensionMessage>(&mut reader)? {
+                match msg {
+                    BrowserExtensionMessage::UrlUpdate {
+                        browser_type,
+                        url,
+                        title,
+                    } => {
+                        let update = UrlUpdate::new(browser_type, url, title);
+                        let _ = tx.blocking_send(update);
+                        write_length_prefixed(&mut writer, &HostExtensionResponse::Ok)?;
+                    }
+                    BrowserExtensionMessage::Ping => {
+                        write_length_prefixed(&mut writer, &HostExtensionResponse::Pong)?;
+                    }
+                    BrowserExtensionMessage::Unknown => {
+                        write_length_prefixed(
+                            &mut writer,
+                            &HostExtensionResponse::Error {
+                                message: "Unknown message type".to_string(),
+                            },
+                        )?;
+                    }
                 }
             }
-        }
-        debug!("Extension stdin reached EOF");
-        Ok(())
+            debug!("Extension stdin reached EOF");
+            Ok(())
+        })();
+
+        (result, writer)
     });
 
-    let res = read_task.await.unwrap_or_else(|e| Err(io::Error::other(e)));
+    let (res, writer) = read_task.await.expect("Browser host read task panicked");
     let _ = socket_task.await;
-    let writer = std::sync::Arc::try_unwrap(writer)
-        .map_err(|_| io::Error::other("Arc ref still held"))
-        .and_then(|m| m.into_inner().map_err(|e| io::Error::other(e.to_string())))
-        .expect("Writer unwrap");
     (res, writer)
 }
 
