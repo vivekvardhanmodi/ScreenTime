@@ -101,6 +101,8 @@ pub enum BrowserIpcMessage {
     },
     #[serde(rename = "ping")]
     Ping,
+    #[serde(rename = "status")]
+    Status,
 }
 
 impl BrowserIpcMessage {
@@ -119,6 +121,12 @@ impl BrowserIpcMessage {
             _ => None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DaemonStatusResponse {
+    pub status: String,
+    pub pid: u32,
 }
 
 pub fn read_length_prefixed<R: Read, T: serde::de::DeserializeOwned>(
@@ -200,6 +208,40 @@ pub fn default_socket_path() -> PathBuf {
     default_runtime_dir().join(DEFAULT_SOCKET_NAME)
 }
 
+/// Derives a deterministic Windows named pipe identifier from a user-supplied socket/pipe path.
+pub fn windows_pipe_name_for_path(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return DEFAULT_WINDOWS_PIPE_NAME.to_string();
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if let Some(rest) = lower.strip_prefix(r"\\.\pipe\") {
+        if !rest.is_empty() {
+            return trimmed[9..].to_string();
+        }
+        return DEFAULT_WINDOWS_PIPE_NAME.to_string();
+    }
+
+    if !trimmed.contains('\\') && !trimmed.contains('/') && !trimmed.contains(':') {
+        return trimmed.to_string();
+    }
+
+    let default_path = default_socket_path();
+    if path == default_path {
+        return DEFAULT_WINDOWS_PIPE_NAME.to_string();
+    }
+
+    // Stable 64-bit FNV-1a hash so distinct temp/custom paths map to distinct named pipes
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in trimmed.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{DEFAULT_WINDOWS_PIPE_NAME}-{hash:016x}")
+}
+
 pub fn socket_name_from_path(path: &Path) -> io::Result<Name<'static>> {
     #[cfg(unix)]
     {
@@ -210,7 +252,8 @@ pub fn socket_name_from_path(path: &Path) -> io::Result<Name<'static>> {
     #[cfg(windows)]
     {
         use interprocess::local_socket::ToNsName;
-        DEFAULT_WINDOWS_PIPE_NAME
+        let pipe_name = windows_pipe_name_for_path(path);
+        pipe_name
             .to_ns_name::<interprocess::local_socket::GenericNamespaced>()
             .map(|n| n.into_owned())
     }
@@ -275,7 +318,7 @@ mod tests {
         let mut buffer = Vec::new();
         let len: u32 = 50;
         buffer.extend_from_slice(&len.to_ne_bytes());
-        buffer.extend_from_slice(b"{\"too\": \"short\"}");
+        buffer.extend_from_slice(br#"{"too": "short"}"#);
 
         let result: io::Result<Option<BrowserExtensionMessage>> =
             read_length_prefixed(Cursor::new(buffer));
@@ -297,7 +340,8 @@ mod tests {
 
     #[test]
     fn test_url_update_deserialization_compatibility() {
-        let raw_from_chrome = r#"{"type":"url_update","source":"chrome","url":"https://github.com","title":"GitHub"}"#;
+        let raw_from_chrome =
+            r#"{"type":"url_update","source":"chrome","url":"https://github.com","title":"GitHub"}"#;
         let parsed: UrlUpdate = serde_json::from_str(raw_from_chrome).expect("Chrome JSON parse");
         assert_eq!(parsed.browser_type, "chrome");
         assert_eq!(parsed.url.as_deref(), Some("https://github.com"));
@@ -326,5 +370,24 @@ mod tests {
         let update = msg.into_url_update().expect("Expected UrlUpdate");
         assert_eq!(update.browser_type, "brave");
         assert_eq!(update.url.as_deref(), Some("https://brave.com"));
+    }
+
+    #[test]
+    fn test_windows_pipe_name_for_path() {
+        assert_eq!(
+            windows_pipe_name_for_path(Path::new(r"\\.\pipe\custom-pipe")),
+            "custom-pipe"
+        );
+        assert_eq!(
+            windows_pipe_name_for_path(Path::new("my-pipe-name")),
+            "my-pipe-name"
+        );
+        let p1 = windows_pipe_name_for_path(Path::new(r"C:\Temp\a\test.sock"));
+        let p2 = windows_pipe_name_for_path(Path::new(r"C:\Temp\b\test.sock"));
+        assert_ne!(p1, p2);
+        assert_eq!(
+            p1,
+            windows_pipe_name_for_path(Path::new(r"C:\Temp\a\test.sock"))
+        );
     }
 }

@@ -92,6 +92,10 @@ async fn test_cli_status_when_running() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("screentimed is running"));
+    assert!(
+        stdout.contains(&format!("PID: {}", std::process::id())),
+        "Expected PID in status output, got: {stdout}"
+    );
 
     server.shutdown().await;
 }
@@ -309,6 +313,8 @@ async fn test_daemon_end_to_end_and_graceful_shutdown() {
         .spawn()
         .expect("Failed to spawn screentimed daemon");
 
+    let child_pid = child.id();
+
     // Wait for daemon IPC socket to become active
     let mut ready = false;
     for _ in 0..50 {
@@ -326,7 +332,12 @@ async fn test_daemon_end_to_end_and_graceful_shutdown() {
         .output()
         .expect("Status check");
     assert!(status_res.status.success());
-    assert!(String::from_utf8_lossy(&status_res.stdout).contains("screentimed is running"));
+    let status_stdout = String::from_utf8_lossy(&status_res.stdout);
+    assert!(status_stdout.contains("screentimed is running"));
+    assert!(
+        status_stdout.contains(&format!("PID: {child_pid}")),
+        "Status output should contain daemon PID {child_pid}: {status_stdout}"
+    );
 
     // Send a URL update over IPC
     let update_msg = serde_json::json!({

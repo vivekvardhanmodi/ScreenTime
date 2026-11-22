@@ -3,10 +3,13 @@ use crate::platform::PlatformBackend;
 use crate::{IpcServer, IpcServerError, SessionManager};
 use interprocess::local_socket::tokio::Stream;
 use interprocess::local_socket::traits::tokio::Stream as _;
-use screentime_core::ipc::{default_socket_path, socket_name_from_path, UrlUpdate};
+use screentime_core::ipc::{
+    default_socket_path, socket_name_from_path, DaemonStatusResponse, UrlUpdate,
+};
 use screentime_core::DbActorHandle;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
@@ -350,24 +353,53 @@ where
     Ok(Subcommand::Run(run_opts))
 }
 
-pub async fn probe_daemon_status(socket_path: &Path) -> bool {
-    match socket_name_from_path(socket_path) {
-        Ok(name) => Stream::connect(name).await.is_ok(),
-        Err(_) => false,
+pub async fn query_daemon_pid(socket_path: &Path) -> Option<Option<u32>> {
+    let name = socket_name_from_path(socket_path).ok()?;
+    let stream = Stream::connect(name).await.ok()?;
+    let (reader, mut writer) = tokio::io::split(stream);
+
+    if writer.write_all(b"{\"event\":\"status\"}\n").await.is_err() {
+        return Some(None);
     }
+    let _ = writer.flush().await;
+
+    let mut lines = BufReader::new(reader).lines();
+    match tokio::time::timeout(Duration::from_millis(500), lines.next_line()).await {
+        Ok(Ok(Some(line))) => {
+            let pid = serde_json::from_str::<DaemonStatusResponse>(line.trim())
+                .ok()
+                .map(|r| r.pid);
+            Some(pid)
+        }
+        _ => Some(None),
+    }
+}
+
+pub async fn probe_daemon_status(socket_path: &Path) -> bool {
+    query_daemon_pid(socket_path).await.is_some()
 }
 
 pub async fn run_status(opts: StatusOptions) -> i32 {
     let socket_path = resolve_socket_path(opts.socket_path.as_deref());
-    if probe_daemon_status(&socket_path).await {
-        println!(
-            "screentimed is running (IPC socket active: {})",
-            socket_path.display()
-        );
-        0
-    } else {
-        println!("screentimed is not running");
-        1
+    match query_daemon_pid(&socket_path).await {
+        Some(Some(pid)) => {
+            println!(
+                "screentimed is running (PID: {pid}, IPC socket active: {})",
+                socket_path.display()
+            );
+            0
+        }
+        Some(None) => {
+            println!(
+                "screentimed is running (IPC socket active: {})",
+                socket_path.display()
+            );
+            0
+        }
+        None => {
+            println!("screentimed is not running");
+            1
+        }
     }
 }
 

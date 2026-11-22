@@ -21,8 +21,8 @@ pub mod windows;
 
 pub use cli::{
     default_db_path, default_log_dir, parse_cli_args, print_help, print_version,
-    probe_daemon_status, resolve_socket_path, run_daemon, run_install_manifests, run_main,
-    run_status, RunOptions, StatusOptions, Subcommand, VERSION,
+    probe_daemon_status, query_daemon_pid, resolve_socket_path, run_daemon, run_install_manifests,
+    run_main, run_status, RunOptions, StatusOptions, Subcommand, VERSION,
 };
 pub use config::{
     default_config_path, default_data_dir, Config, DaemonConfig, EnvLookup, IniDocument,
