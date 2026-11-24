@@ -62,6 +62,7 @@ function createHarness(ext, { windows, currentWindowId, lastFocusedWindowId }) {
   const cloneWindow = (win, populate) => {
     const copy = {
       id: win.id,
+      type: win.type ?? "normal",
       focused: win.focused,
     };
     if (populate) {
@@ -126,9 +127,16 @@ function createHarness(ext, { windows, currentWindowId, lastFocusedWindowId }) {
         return cloneWindow(win, Boolean(options.populate));
       },
       async getLastFocused(options = {}) {
+        const allowedTypes =
+          options?.windowTypes ??
+          (ext.name === "chrome" ? ["normal", "popup"] : null);
+        const candidates = state.windows.filter((w) => {
+          if (!allowedTypes) return true;
+          return allowedTypes.includes(w.type ?? "normal");
+        });
         const win =
-          state.windows.find((w) => w.focused) ||
-          state.windows.find((w) => w.id === state.lastFocusedWindowId);
+          candidates.find((w) => w.focused) ||
+          candidates.find((w) => w.id === state.lastFocusedWindowId);
         if (!win) {
           throw new Error("No windows available");
         }
@@ -380,7 +388,6 @@ for (const ext of EXTENSIONS) {
     h.tabsQueryCalls.length = 0;
     h.windowGetCalls.length = 0;
 
-    // Focus switches to window 2 while tabs.query(currentWindow) would still return window 1
     h.state.windows[0].focused = false;
     h.state.windows[1].focused = true;
     await h.emitWindowFocusChanged(2);
@@ -405,7 +412,6 @@ for (const ext of EXTENSIONS) {
       },
     ]);
 
-    // Refocusing window 2 with identical URL/title must force re-send
     h.sentMessages.length = 0;
     await h.emitWindowFocusChanged(2);
     assert.deepEqual(h.sentMessages, [
@@ -417,7 +423,6 @@ for (const ext of EXTENSIONS) {
       },
     ]);
 
-    // Interleaved WINDOW_ID_NONE must cancel in-flight windows.get(2)
     h.sentMessages.length = 0;
     const deferred = h.holdNextWindowGet(2);
     const focusPromise = h.emitWindowFocusChanged(2);
@@ -509,16 +514,17 @@ for (const ext of EXTENSIONS) {
     await flushAsync();
     h.sentMessages.length = 0;
 
+    h.state.windows[0].tabs[0] = {
+      id: 11,
+      windowId: 1,
+      active: true,
+      url: "https://www.example.com/loaded",
+      title: `Loaded Page${ext.titleSuffix}`,
+    };
     await h.emitTabUpdated(
       11,
       { status: "complete" },
-      {
-        id: 11,
-        windowId: 1,
-        active: true,
-        url: "https://www.example.com/loaded",
-        title: `Loaded Page${ext.titleSuffix}`,
-      },
+      structuredClone(h.state.windows[0].tabs[0]),
     );
     assert.deepEqual(h.sentMessages, [
       {
@@ -530,16 +536,17 @@ for (const ext of EXTENSIONS) {
     ]);
 
     h.sentMessages.length = 0;
+    h.state.windows[0].tabs[0] = {
+      id: 11,
+      windowId: 1,
+      active: true,
+      url: "https://www.example.com/empty-title",
+      title: `   ${ext.titleSuffix}`,
+    };
     await h.emitTabUpdated(
       11,
       { title: `   ${ext.titleSuffix}` },
-      {
-        id: 11,
-        windowId: 1,
-        active: true,
-        url: "https://www.example.com/empty-title",
-        title: `   ${ext.titleSuffix}`,
-      },
+      structuredClone(h.state.windows[0].tabs[0]),
     );
     assert.deepEqual(h.sentMessages, [
       {
@@ -550,4 +557,349 @@ for (const ext of EXTENSIONS) {
       },
     ]);
   });
+
+  test(`${ext.name}: tabs.onUpdated racing with tabs.onActivated or live tab changes never reverts to stale snapshot`, async () => {
+    const h = createHarness(ext, {
+      currentWindowId: 1,
+      lastFocusedWindowId: 1,
+      windows: [
+        {
+          id: 1,
+          focused: true,
+          tabs: [
+            {
+              id: 11,
+              windowId: 1,
+              active: true,
+              url: "https://example.com/one",
+              title: `One${ext.titleSuffix}`,
+            },
+            {
+              id: 12,
+              windowId: 1,
+              active: false,
+              url: "https://example.com/two",
+              title: `Two${ext.titleSuffix}`,
+            },
+          ],
+        },
+      ],
+    });
+    await flushAsync();
+    h.sentMessages.length = 0;
+
+    const deferredUpdate = h.holdNextWindowGet(1);
+    const updatePromise = h.emitTabUpdated(
+      11,
+      { title: `Stale One${ext.titleSuffix}` },
+      {
+        id: 11,
+        windowId: 1,
+        active: true,
+        url: "https://example.com/one",
+        title: `Stale One${ext.titleSuffix}`,
+      },
+    );
+
+    h.state.windows[0].tabs[0].active = false;
+    h.state.windows[0].tabs[1].active = true;
+    await h.emitTabActivated({ tabId: 12, windowId: 1 });
+
+    deferredUpdate.resolve({
+      id: 1,
+      type: "normal",
+      focused: true,
+      tabs: [
+        {
+          id: 11,
+          windowId: 1,
+          active: true,
+          url: "https://example.com/one",
+          title: `Stale One${ext.titleSuffix}`,
+        },
+      ],
+    });
+    await updatePromise;
+
+    assert.deepEqual(
+      h.sentMessages,
+      [
+        {
+          type: "url_update",
+          source: ext.source,
+          url: "https://example.com/two",
+          title: "Two",
+        },
+      ],
+      "stale tabs.onUpdated completion after tabs.onActivated must be dropped",
+    );
+
+    h.sentMessages.length = 0;
+    const deferredLive = h.holdNextWindowGet(1);
+    const livePromise = h.emitTabUpdated(
+      12,
+      { title: `Pre-Await Two${ext.titleSuffix}` },
+      {
+        id: 12,
+        windowId: 1,
+        active: true,
+        url: "https://example.com/two",
+        title: `Pre-Await Two${ext.titleSuffix}`,
+      },
+    );
+    h.state.windows[0].tabs[1].title = `Live Two${ext.titleSuffix}`;
+    deferredLive.resolve();
+    await livePromise;
+
+    assert.deepEqual(
+      h.sentMessages,
+      [
+        {
+          type: "url_update",
+          source: ext.source,
+          url: "https://example.com/two",
+          title: "Live Two",
+        },
+      ],
+      "tabs.onUpdated must publish live active tab state rather than pre-await snapshot",
+    );
+  });
+
+  test(`${ext.name}: unfocused background window sync resolving mid-flight does not cancel focused sync or drop pending force`, async () => {
+    const h = createHarness(ext, {
+      currentWindowId: 1,
+      lastFocusedWindowId: 1,
+      windows: [
+        {
+          id: 1,
+          focused: true,
+          tabs: [
+            {
+              id: 11,
+              windowId: 1,
+              active: true,
+              url: "https://example.com/one",
+              title: `One${ext.titleSuffix}`,
+            },
+            {
+              id: 12,
+              windowId: 1,
+              active: false,
+              url: "https://example.com/focused-next",
+              title: `Focused Next${ext.titleSuffix}`,
+            },
+          ],
+        },
+        {
+          id: 2,
+          focused: false,
+          tabs: [
+            {
+              id: 21,
+              windowId: 2,
+              active: true,
+              url: "https://example.com/bg-one",
+              title: `Background One${ext.titleSuffix}`,
+            },
+            {
+              id: 22,
+              windowId: 2,
+              active: false,
+              url: "https://example.com/bg-two",
+              title: `Background Two${ext.titleSuffix}`,
+            },
+          ],
+        },
+      ],
+    });
+    await flushAsync();
+    h.sentMessages.length = 0;
+
+    const deferredActivated = h.holdNextWindowGet(1);
+    h.state.windows[0].tabs[0].active = false;
+    h.state.windows[0].tabs[1].active = true;
+    const focusedPromise = h.emitTabActivated({ tabId: 12, windowId: 1 });
+
+    await h.emitTabUpdated(
+      21,
+      { title: `Background Updated${ext.titleSuffix}` },
+      {
+        id: 21,
+        windowId: 2,
+        active: true,
+        url: "https://example.com/bg-one",
+        title: `Background Updated${ext.titleSuffix}`,
+      },
+    );
+    h.state.windows[1].tabs[0].active = false;
+    h.state.windows[1].tabs[1].active = true;
+    await h.emitTabActivated({ tabId: 22, windowId: 2 });
+
+    deferredActivated.resolve();
+    await focusedPromise;
+    await flushAsync();
+
+    assert.deepEqual(
+      h.sentMessages,
+      [
+        {
+          type: "url_update",
+          source: ext.source,
+          url: "https://example.com/focused-next",
+          title: "Focused Next",
+        },
+      ],
+      "unfocused background window events must not cancel in-flight focused window sync",
+    );
+
+    h.sentMessages.length = 0;
+    const deferredForced = h.holdNextWindowGet(1);
+    const forcedPromise = h.emitWindowFocusChanged(1);
+
+    await h.emitTabUpdated(
+      22,
+      { title: `Background Two Updated${ext.titleSuffix}` },
+      {
+        id: 22,
+        windowId: 2,
+        active: true,
+        url: "https://example.com/bg-two",
+        title: `Background Two Updated${ext.titleSuffix}`,
+      },
+    );
+
+    deferredForced.resolve();
+    await forcedPromise;
+    await flushAsync();
+
+    assert.deepEqual(
+      h.sentMessages,
+      [
+        {
+          type: "url_update",
+          source: ext.source,
+          url: "https://example.com/focused-next",
+          title: "Focused Next",
+        },
+      ],
+      "unfocused background window sync must not clear pending force for in-flight focused sync",
+    );
+  });
+
+  test(`${ext.name}: overlapping non-forced tabs.onUpdated preserves force from pending windows.onFocusChanged`, async () => {
+    const h = createHarness(ext, {
+      currentWindowId: 1,
+      lastFocusedWindowId: 1,
+      windows: [
+        {
+          id: 1,
+          focused: true,
+          tabs: [
+            {
+              id: 11,
+              windowId: 1,
+              active: true,
+              url: "https://example.com/same",
+              title: `Same${ext.titleSuffix}`,
+            },
+          ],
+        },
+      ],
+    });
+    await flushAsync();
+    h.sentMessages.length = 0;
+
+    const deferredFocus = h.holdNextWindowGet(1);
+    const focusPromise = h.emitWindowFocusChanged(1);
+
+    await h.emitTabUpdated(
+      11,
+      { status: "complete" },
+      structuredClone(h.state.windows[0].tabs[0]),
+    );
+
+    deferredFocus.resolve();
+    await focusPromise;
+    await flushAsync();
+
+    assert.deepEqual(
+      h.sentMessages,
+      [
+        {
+          type: "url_update",
+          source: ext.source,
+          url: "https://example.com/same",
+          title: "Same",
+        },
+      ],
+      "overlapping non-forced tabs.onUpdated must preserve force: true and send once even when url/title match prior state",
+    );
+  });
 }
+
+test("chrome: startup and keepalive alarm find focused type 'app' PWA window when normal window is unfocused", async () => {
+  const chromeExt = EXTENSIONS[0];
+  const h = createHarness(chromeExt, {
+    currentWindowId: 1,
+    lastFocusedWindowId: 1,
+    windows: [
+      {
+        id: 1,
+        type: "normal",
+        focused: false,
+        tabs: [
+          {
+            id: 11,
+            windowId: 1,
+            active: true,
+            url: "https://github.com/rust-lang/rust",
+            title: "Rust Repo - Google Chrome",
+          },
+        ],
+      },
+      {
+        id: 2,
+        type: "app",
+        focused: true,
+        tabs: [
+          {
+            id: 21,
+            windowId: 2,
+            active: true,
+            url: "https://www.youtube.com/watch?v=pwa123",
+            title: "PWA Video - YouTube - Google Chrome",
+          },
+        ],
+      },
+    ],
+  });
+  await flushAsync();
+
+  assert.deepEqual(
+    h.sentMessages,
+    [
+      {
+        type: "url_update",
+        source: "chrome",
+        url: "https://youtube.com/watch?v=pwa123",
+        title: "PWA Video - YouTube",
+      },
+    ],
+    "Chrome startup must include 'app' windowTypes to find focused PWA window",
+  );
+
+  h.sentMessages.length = 0;
+  await h.emitKeepaliveAlarm();
+  assert.deepEqual(
+    h.sentMessages,
+    [
+      {
+        type: "url_update",
+        source: "chrome",
+        url: "https://youtube.com/watch?v=pwa123",
+        title: "PWA Video - YouTube",
+      },
+    ],
+    "Chrome keepalive alarm must include 'app' windowTypes to find focused PWA window",
+  );
+});
