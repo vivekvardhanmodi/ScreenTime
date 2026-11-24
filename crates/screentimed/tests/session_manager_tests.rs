@@ -3,7 +3,7 @@ use screentime_core::{
     DbActorHandle, IdleDetector, IdleState, TitleRulesCache, TrackerError, UrlUpdate, WindowInfo,
     WindowTracker,
 };
-use screentimed::{is_browser_app, SessionManager};
+use screentimed::{is_browser_app, SessionManager, SleepEvent};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -600,5 +600,236 @@ async fn test_run_loop_requeries_active_window_on_idle_resume() {
     assert!(
         sessions.iter().any(|s| s.app_class == "code"),
         "Expected re-queried window 'code' after resume, got: {sessions:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_pwa_preserves_extension_title_across_idle_sleep_lid_and_heartbeat_resume() {
+    let dir = tempdir().expect("Failed to create tempdir");
+    let db_path = dir.path().join("test_pwa_resume_titles.db");
+    let db = DbActorHandle::spawn(&db_path).expect("Failed to spawn DbActor");
+
+    let mut sm = SessionManager::new(db.clone());
+    let pwa_window = WindowInfo::new(
+        "chrome-agimnkijcaahngcdmfeangaknmldooml-Default",
+        "YouTube",
+    );
+
+    let initial_id = sm
+        .handle_window_change(Some(pwa_window), 100.0)
+        .await
+        .unwrap()
+        .unwrap();
+
+    sm.handle_url_update(
+        UrlUpdate::new(
+            "chrome",
+            Some("https://www.youtube.com/watch?v=abc123".to_string()),
+            Some("Rust Async Deep Dive - YouTube".to_string()),
+        ),
+        100.5,
+    )
+    .await
+    .unwrap();
+    sm.handle_heartbeat(105.0).await.unwrap();
+
+    sm.handle_idle_change(IdleState::Idle, 110.0).await.unwrap();
+    sm.handle_idle_change(IdleState::Active, 120.0)
+        .await
+        .unwrap();
+    let idle_resumed_id = sm.current_session_id().expect("Idle resume session");
+    assert_ne!(idle_resumed_id, initial_id);
+    let idle_row = db.get_session(idle_resumed_id).await.unwrap().unwrap();
+    assert_eq!(
+        idle_row.website_url.as_deref(),
+        Some("https://www.youtube.com/watch?v=abc123")
+    );
+    assert_eq!(
+        idle_row.app_title.as_deref(),
+        Some("Rust Async Deep Dive - YouTube"),
+        "idle resume must preserve extension title instead of Hyprland generic title"
+    );
+
+    sm.handle_heartbeat(125.0).await.unwrap();
+    sm.handle_sleep_event(SleepEvent::Sleep, 130.0)
+        .await
+        .unwrap();
+    sm.handle_sleep_event(SleepEvent::Wake, 140.0)
+        .await
+        .unwrap();
+    let sleep_resumed_id = sm.current_session_id().expect("Sleep resume session");
+    assert_ne!(sleep_resumed_id, idle_resumed_id);
+    let sleep_row = db.get_session(sleep_resumed_id).await.unwrap().unwrap();
+    assert_eq!(
+        sleep_row.app_title.as_deref(),
+        Some("Rust Async Deep Dive - YouTube"),
+        "sleep wake must preserve extension title"
+    );
+
+    sm.handle_heartbeat(145.0).await.unwrap();
+    sm.handle_sleep_event(
+        SleepEvent::LidClosed {
+            has_external_display: false,
+        },
+        150.0,
+    )
+    .await
+    .unwrap();
+    sm.handle_sleep_event(SleepEvent::LidOpened, 160.0)
+        .await
+        .unwrap();
+    let lid_resumed_id = sm.current_session_id().expect("Lid open resume session");
+    assert_ne!(lid_resumed_id, sleep_resumed_id);
+    let lid_row = db.get_session(lid_resumed_id).await.unwrap().unwrap();
+    assert_eq!(
+        lid_row.app_title.as_deref(),
+        Some("Rust Async Deep Dive - YouTube"),
+        "lid open must preserve extension title"
+    );
+
+    sm.handle_heartbeat(165.0).await.unwrap();
+    sm.handle_heartbeat(265.0).await.unwrap();
+    let hb_resumed_id = sm.current_session_id().expect("Heartbeat jump session");
+    assert_ne!(hb_resumed_id, lid_resumed_id);
+    let hb_row = db.get_session(hb_resumed_id).await.unwrap().unwrap();
+    assert_eq!(
+        hb_row.app_title.as_deref(),
+        Some("Rust Async Deep Dive - YouTube"),
+        "heartbeat jump resume must preserve extension title"
+    );
+}
+
+#[tokio::test]
+async fn test_buffered_url_update_while_non_browser_focused_preserves_title() {
+    let dir = tempdir().expect("Failed to create tempdir");
+    let db_path = dir.path().join("test_buffered_title.db");
+    let db = DbActorHandle::spawn(&db_path).expect("Failed to spawn DbActor");
+
+    let mut sm = SessionManager::new(db.clone());
+
+    sm.handle_window_change(Some(WindowInfo::new("kitty", "nvim")), 100.0)
+        .await
+        .unwrap();
+
+    sm.handle_url_update(
+        UrlUpdate::new(
+            "chrome",
+            Some("https://gemini.google.com/app/123".to_string()),
+            Some("Gemini - Rust Architecture Chat".to_string()),
+        ),
+        102.0,
+    )
+    .await
+    .unwrap();
+
+    let pwa_id = sm
+        .handle_window_change(
+            Some(WindowInfo::new("chrome-gemini-Default", "Gemini")),
+            105.0,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    let pwa_row = db.get_session(pwa_id).await.unwrap().unwrap();
+    assert_eq!(
+        pwa_row.website_url.as_deref(),
+        Some("https://gemini.google.com/app/123")
+    );
+    assert_eq!(
+        pwa_row.app_title.as_deref(),
+        Some("Gemini - Rust Architecture Chat"),
+        "focusing PWA after buffered UrlUpdate must restore buffered title"
+    );
+}
+
+#[tokio::test]
+async fn test_chrome_and_pwa_cached_state_isolated_per_app_class() {
+    let dir = tempdir().expect("Failed to create tempdir");
+    let db_path = dir.path().join("test_pwa_isolation.db");
+    let db = DbActorHandle::spawn(&db_path).expect("Failed to spawn DbActor");
+
+    let mut sm = SessionManager::new(db.clone());
+
+    sm.handle_window_change(
+        Some(WindowInfo::new("google-chrome", "Google Chrome")),
+        100.0,
+    )
+    .await
+    .unwrap();
+    sm.handle_url_update(
+        UrlUpdate::new(
+            "chrome",
+            Some("https://github.com/rust-lang/rust".to_string()),
+            Some("rust-lang/rust".to_string()),
+        ),
+        100.5,
+    )
+    .await
+    .unwrap();
+
+    // Switching to an unseen Chrome PWA must not inherit google-chrome's URL or title
+    let pwa_id1 = sm
+        .handle_window_change(
+            Some(WindowInfo::new(
+                "chrome-agimnkijcaahngcdmfeangaknmldooml-Default",
+                "YouTube",
+            )),
+            105.0,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let pwa_row1 = db.get_session(pwa_id1).await.unwrap().unwrap();
+    assert_eq!(pwa_row1.website_url, None);
+    assert_eq!(pwa_row1.app_title.as_deref(), Some("YouTube"));
+
+    sm.handle_url_update(
+        UrlUpdate::new(
+            "chrome",
+            Some("https://www.youtube.com/watch?v=xyz".to_string()),
+            Some("Systems Programming Talk - YouTube".to_string()),
+        ),
+        105.5,
+    )
+    .await
+    .unwrap();
+
+    // Switching back to google-chrome without a new update must restore google-chrome's state
+    let chrome_id2 = sm
+        .handle_window_change(
+            Some(WindowInfo::new("google-chrome", "Google Chrome")),
+            110.0,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let chrome_row2 = db.get_session(chrome_id2).await.unwrap().unwrap();
+    assert_eq!(
+        chrome_row2.website_url.as_deref(),
+        Some("https://github.com/rust-lang/rust")
+    );
+    assert_eq!(chrome_row2.app_title.as_deref(), Some("rust-lang/rust"));
+
+    // Switching back to the YouTube PWA must restore YouTube's own URL and title
+    let pwa_id2 = sm
+        .handle_window_change(
+            Some(WindowInfo::new(
+                "chrome-agimnkijcaahngcdmfeangaknmldooml-Default",
+                "YouTube",
+            )),
+            115.0,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let pwa_row2 = db.get_session(pwa_id2).await.unwrap().unwrap();
+    assert_eq!(
+        pwa_row2.website_url.as_deref(),
+        Some("https://www.youtube.com/watch?v=xyz")
+    );
+    assert_eq!(
+        pwa_row2.app_title.as_deref(),
+        Some("Systems Programming Talk - YouTube")
     );
 }
