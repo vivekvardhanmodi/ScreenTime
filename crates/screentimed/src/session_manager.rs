@@ -352,7 +352,15 @@ impl SessionManager {
                     let generic_pending = self.pending_browser_state_by_family.remove("browser");
                     let pending = family_pending.or(generic_pending);
                     match mode {
-                        SessionStartMode::WindowSwitch => pending,
+                        SessionStartMode::WindowSwitch => {
+                            if let Some(ref state) = pending {
+                                self.browser_state_by_class
+                                    .insert(win.app_class.clone(), state.clone());
+                            } else {
+                                self.browser_state_by_class.remove(&win.app_class);
+                            }
+                            pending
+                        }
                         SessionStartMode::Resume => pending
                             .or_else(|| self.browser_state_by_class.get(&win.app_class).cloned()),
                     }
