@@ -42,6 +42,12 @@ struct CachedBrowserState {
     title: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SessionStartMode {
+    WindowSwitch,
+    Resume,
+}
+
 pub struct SessionManager {
     db: DbActorHandle,
     title_rules: TitleRulesCache,
@@ -327,22 +333,30 @@ impl SessionManager {
         Ok(())
     }
 
-    async fn start_session(&mut self, win: WindowInfo, now: f64) -> Result<i64, DbError> {
+    async fn start_session(
+        &mut self,
+        win: WindowInfo,
+        now: f64,
+        mode: SessionStartMode,
+    ) -> Result<i64, DbError> {
         self.maybe_reload_title_rules(now).await;
 
         let effective_class = self
             .title_rules
             .resolve_app_class(&win.app_class, Some(&win.title));
 
-        let initial_state = self
-            .browser_family_for_class(&win.app_class)
-            .and_then(|family| {
-                let family_pending = self.pending_browser_state_by_family.remove(family);
-                let generic_pending = self.pending_browser_state_by_family.remove("browser");
-                family_pending
-                    .or(generic_pending)
-                    .or_else(|| self.browser_state_by_class.get(&win.app_class).cloned())
-            });
+        let initial_state =
+            self.browser_family_for_class(&win.app_class)
+                .and_then(|family| {
+                    let family_pending = self.pending_browser_state_by_family.remove(family);
+                    let generic_pending = self.pending_browser_state_by_family.remove("browser");
+                    let pending = family_pending.or(generic_pending);
+                    match mode {
+                        SessionStartMode::WindowSwitch => pending,
+                        SessionStartMode::Resume => pending
+                            .or_else(|| self.browser_state_by_class.get(&win.app_class).cloned()),
+                    }
+                });
 
         let initial_url = initial_state.as_ref().map(|s| s.url.clone());
         let initial_title = initial_state
@@ -375,7 +389,8 @@ impl SessionManager {
         }
 
         if let Some(win) = self.current_window.clone() {
-            self.start_session(win, now).await?;
+            self.start_session(win, now, SessionStartMode::Resume)
+                .await?;
         }
 
         Ok(())
@@ -431,7 +446,9 @@ impl SessionManager {
         };
 
         self.close_active_session(now).await?;
-        let new_id = self.start_session(win, now).await?;
+        let new_id = self
+            .start_session(win, now, SessionStartMode::WindowSwitch)
+            .await?;
         Ok(Some(new_id))
     }
 
@@ -611,7 +628,8 @@ impl SessionManager {
             self.close_active_session(prev_hb).await?;
 
             if let Some(win) = self.current_window.clone() {
-                self.start_session(win, now).await?;
+                self.start_session(win, now, SessionStartMode::Resume)
+                    .await?;
             }
         } else if let Some(id) = self.current_session_id {
             self.db.update_end_time(id, now).await?;

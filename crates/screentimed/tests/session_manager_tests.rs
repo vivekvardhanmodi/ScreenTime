@@ -747,13 +747,12 @@ async fn test_chrome_and_pwa_cached_state_isolated_per_app_class() {
     let db = DbActorHandle::spawn(&db_path).expect("Failed to spawn DbActor");
 
     let mut sm = SessionManager::new(db.clone());
+    let chrome_win = WindowInfo::new("google-chrome", "Google Chrome");
+    let pwa_win = WindowInfo::new("chrome-agimnkijcaahngcdmfeangaknmldooml-Default", "YouTube");
 
-    sm.handle_window_change(
-        Some(WindowInfo::new("google-chrome", "Google Chrome")),
-        100.0,
-    )
-    .await
-    .unwrap();
+    sm.handle_window_change(Some(chrome_win.clone()), 100.0)
+        .await
+        .unwrap();
     sm.handle_url_update(
         UrlUpdate::new(
             "chrome",
@@ -766,13 +765,7 @@ async fn test_chrome_and_pwa_cached_state_isolated_per_app_class() {
     .unwrap();
 
     let pwa_id1 = sm
-        .handle_window_change(
-            Some(WindowInfo::new(
-                "chrome-agimnkijcaahngcdmfeangaknmldooml-Default",
-                "YouTube",
-            )),
-            105.0,
-        )
+        .handle_window_change(Some(pwa_win.clone()), 105.0)
         .await
         .unwrap()
         .unwrap();
@@ -790,41 +783,53 @@ async fn test_chrome_and_pwa_cached_state_isolated_per_app_class() {
     )
     .await
     .unwrap();
+    let pwa_updated = db.get_session(pwa_id1).await.unwrap().unwrap();
+    assert_eq!(
+        pwa_updated.website_url.as_deref(),
+        Some("https://www.youtube.com/watch?v=xyz")
+    );
+    assert_eq!(
+        pwa_updated.app_title.as_deref(),
+        Some("Systems Programming Talk - YouTube")
+    );
+
+    sm.handle_idle_change(IdleState::Idle, 108.0).await.unwrap();
+    sm.handle_idle_change(IdleState::Active, 110.0)
+        .await
+        .unwrap();
+    let pwa_resumed_id = sm.current_session_id().expect("Resumed PWA session");
+    let pwa_resumed_row = db.get_session(pwa_resumed_id).await.unwrap().unwrap();
+    assert_eq!(
+        pwa_resumed_row.website_url.as_deref(),
+        Some("https://www.youtube.com/watch?v=xyz")
+    );
+    assert_eq!(
+        pwa_resumed_row.app_title.as_deref(),
+        Some("Systems Programming Talk - YouTube")
+    );
 
     let chrome_id2 = sm
-        .handle_window_change(
-            Some(WindowInfo::new("google-chrome", "Google Chrome")),
-            110.0,
-        )
+        .handle_window_change(Some(chrome_win), 115.0)
         .await
         .unwrap()
         .unwrap();
     let chrome_row2 = db.get_session(chrome_id2).await.unwrap().unwrap();
+    assert_eq!(chrome_row2.website_url, None);
+    assert_eq!(chrome_row2.app_title.as_deref(), Some("Google Chrome"));
+
+    sm.handle_idle_change(IdleState::Idle, 118.0).await.unwrap();
+    sm.handle_idle_change(IdleState::Active, 120.0)
+        .await
+        .unwrap();
+    let chrome_resumed_id = sm.current_session_id().expect("Resumed Chrome session");
+    let chrome_resumed_row = db.get_session(chrome_resumed_id).await.unwrap().unwrap();
     assert_eq!(
-        chrome_row2.website_url.as_deref(),
+        chrome_resumed_row.website_url.as_deref(),
         Some("https://github.com/rust-lang/rust")
     );
-    assert_eq!(chrome_row2.app_title.as_deref(), Some("rust-lang/rust"));
-
-    let pwa_id2 = sm
-        .handle_window_change(
-            Some(WindowInfo::new(
-                "chrome-agimnkijcaahngcdmfeangaknmldooml-Default",
-                "YouTube",
-            )),
-            115.0,
-        )
-        .await
-        .unwrap()
-        .unwrap();
-    let pwa_row2 = db.get_session(pwa_id2).await.unwrap().unwrap();
     assert_eq!(
-        pwa_row2.website_url.as_deref(),
-        Some("https://www.youtube.com/watch?v=xyz")
-    );
-    assert_eq!(
-        pwa_row2.app_title.as_deref(),
-        Some("Systems Programming Talk - YouTube")
+        chrome_resumed_row.app_title.as_deref(),
+        Some("rust-lang/rust")
     );
 }
 
@@ -879,23 +884,6 @@ async fn test_none_url_update_preserves_other_pwa_cached_state() {
         Some("Google Chrome")
     );
 
-    let pwa_after_newtab_id = sm
-        .handle_window_change(Some(pwa_win.clone()), 110.0)
-        .await
-        .unwrap()
-        .unwrap();
-    let pwa_after_newtab_row = db.get_session(pwa_after_newtab_id).await.unwrap().unwrap();
-    assert_eq!(
-        pwa_after_newtab_row.website_url.as_deref(),
-        Some("https://www.youtube.com/watch?v=xyz"),
-        "chrome://newtab in google-chrome must not wipe YouTube PWA URL"
-    );
-    assert_eq!(
-        pwa_after_newtab_row.app_title.as_deref(),
-        Some("Systems Programming Talk - YouTube"),
-        "chrome://newtab in google-chrome must not wipe YouTube PWA title"
-    );
-
     sm.handle_window_change(Some(WindowInfo::new("kitty", "nvim")), 115.0)
         .await
         .unwrap();
@@ -923,14 +911,126 @@ async fn test_none_url_update_preserves_other_pwa_cached_state() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(
-        pwa_after_focus_loss_row.website_url.as_deref(),
-        Some("https://www.youtube.com/watch?v=xyz"),
-        "WINDOW_ID_NONE while non-browser focused must clear pending state without wiping YouTube PWA URL"
-    );
+    assert_eq!(pwa_after_focus_loss_row.website_url, None);
     assert_eq!(
         pwa_after_focus_loss_row.app_title.as_deref(),
-        Some("Systems Programming Talk - YouTube"),
-        "WINDOW_ID_NONE while non-browser focused must preserve YouTube PWA title"
+        Some("YouTube")
     );
+
+    sm.handle_idle_change(IdleState::Idle, 122.0).await.unwrap();
+    sm.handle_idle_change(IdleState::Active, 125.0)
+        .await
+        .unwrap();
+    let pwa_resumed_id = sm.current_session_id().expect("Resumed PWA session");
+    let pwa_resumed_row = db.get_session(pwa_resumed_id).await.unwrap().unwrap();
+    assert_eq!(
+        pwa_resumed_row.website_url.as_deref(),
+        Some("https://www.youtube.com/watch?v=xyz"),
+        "chrome://newtab and WINDOW_ID_NONE must preserve YouTube PWA cached URL for same-window resume"
+    );
+    assert_eq!(
+        pwa_resumed_row.app_title.as_deref(),
+        Some("Systems Programming Talk - YouTube"),
+        "chrome://newtab and WINDOW_ID_NONE must preserve YouTube PWA cached title for same-window resume"
+    );
+}
+
+#[tokio::test]
+async fn test_incognito_after_normal_chrome_and_non_browser_does_not_leak_url_or_title() {
+    let dir = tempdir().expect("Failed to create tempdir");
+    let db_path = dir.path().join("test_incognito_no_leak.db");
+    let db = DbActorHandle::spawn(&db_path).expect("Failed to spawn DbActor");
+
+    let mut sm = SessionManager::new(db.clone());
+
+    sm.handle_window_change(
+        Some(WindowInfo::new("google-chrome", "GitHub - Google Chrome")),
+        100.0,
+    )
+    .await
+    .unwrap();
+    sm.handle_url_update(
+        UrlUpdate::new(
+            "chrome",
+            Some("https://github.com/rust-lang/rust".to_string()),
+            Some("GitHub".to_string()),
+        ),
+        100.4,
+    )
+    .await
+    .unwrap();
+
+    sm.handle_window_change(Some(WindowInfo::new("kitty", "zsh")), 105.0)
+        .await
+        .unwrap();
+
+    let incognito_id = sm
+        .handle_window_change(
+            Some(WindowInfo::new(
+                "google-chrome",
+                "New Incognito Tab - Google Chrome",
+            )),
+            110.0,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    let incognito_row = db.get_session(incognito_id).await.unwrap().unwrap();
+    assert_eq!(incognito_row.website_url, None);
+    assert_eq!(
+        incognito_row.app_title.as_deref(),
+        Some("New Incognito Tab - Google Chrome")
+    );
+}
+
+#[tokio::test]
+async fn test_switching_between_two_chrome_windows_updates_in_place_without_thrashing() {
+    let dir = tempdir().expect("Failed to create tempdir");
+    let db_path = dir.path().join("test_two_chrome_windows.db");
+    let db = DbActorHandle::spawn(&db_path).expect("Failed to spawn DbActor");
+
+    let mut sm = SessionManager::new(db.clone());
+
+    sm.handle_window_change(
+        Some(WindowInfo::new("google-chrome", "Window A - Google Chrome")),
+        100.0,
+    )
+    .await
+    .unwrap();
+    sm.handle_url_update(
+        UrlUpdate::new(
+            "chrome",
+            Some("https://docs.rs".to_string()),
+            Some("Docs.rs".to_string()),
+        ),
+        100.3,
+    )
+    .await
+    .unwrap();
+
+    let win_b_id = sm
+        .handle_window_change(
+            Some(WindowInfo::new("google-chrome", "Window B - Google Chrome")),
+            105.0,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    sm.handle_url_update(
+        UrlUpdate::new(
+            "chrome",
+            Some("https://crates.io".to_string()),
+            Some("crates.io".to_string()),
+        ),
+        105.3,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(sm.current_session_id(), Some(win_b_id));
+    let win_b_row = db.get_session(win_b_id).await.unwrap().unwrap();
+    assert_eq!(win_b_row.website_url.as_deref(), Some("https://crates.io"));
+    assert_eq!(win_b_row.app_title.as_deref(), Some("crates.io"));
 }
