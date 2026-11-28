@@ -68,6 +68,7 @@ pub struct SessionManager {
     last_heartbeat: f64,
     browser_state_by_class: HashMap<String, CachedBrowserState>,
     pending_browser_state_by_family: HashMap<String, CachedBrowserState>,
+    last_browser_window_by_family: HashMap<&'static str, WindowInfo>,
     chrome_window_class: String,
     firefox_window_class: String,
     heartbeat_interval: Duration,
@@ -96,6 +97,7 @@ impl SessionManager {
             last_heartbeat: 0.0,
             browser_state_by_class: HashMap::new(),
             pending_browser_state_by_family: HashMap::new(),
+            last_browser_window_by_family: HashMap::new(),
             chrome_window_class: "google-chrome".to_string(),
             firefox_window_class: "firefox".to_string(),
             heartbeat_interval: Duration::from_secs(10),
@@ -351,15 +353,23 @@ impl SessionManager {
                     let family_pending = self.pending_browser_state_by_family.remove(family);
                     let generic_pending = self.pending_browser_state_by_family.remove("browser");
                     let pending = family_pending.or(generic_pending);
+                    let same_browser_window = self
+                        .last_browser_window_by_family
+                        .insert(family, win.clone())
+                        .as_ref()
+                        == Some(&win);
                     match mode {
                         SessionStartMode::WindowSwitch => {
                             if let Some(ref state) = pending {
                                 self.browser_state_by_class
                                     .insert(win.app_class.clone(), state.clone());
+                                pending
+                            } else if same_browser_window {
+                                self.browser_state_by_class.get(&win.app_class).cloned()
                             } else {
                                 self.browser_state_by_class.remove(&win.app_class);
+                                None
                             }
-                            pending
                         }
                         SessionStartMode::Resume => pending
                             .or_else(|| self.browser_state_by_class.get(&win.app_class).cloned()),

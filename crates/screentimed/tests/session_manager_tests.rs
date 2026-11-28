@@ -1062,6 +1062,49 @@ async fn test_incognito_after_normal_chrome_and_non_browser_stays_clean_across_r
 }
 
 #[tokio::test]
+async fn test_pwa_return_from_non_browser_without_extension_event_preserves_title() {
+    let dir = tempdir().expect("Failed to create tempdir");
+    let db_path = dir.path().join("test_pwa_kitty_return.db");
+    let db = DbActorHandle::spawn(&db_path).expect("Failed to spawn DbActor");
+
+    let mut sm = SessionManager::new(db.clone());
+    let pwa_win = WindowInfo::new("chrome-agimnkijcaahngcdmfeangaknmldooml-Default", "YouTube");
+
+    sm.handle_window_change(Some(pwa_win.clone()), 100.0)
+        .await
+        .unwrap();
+    sm.handle_url_update(
+        UrlUpdate::new(
+            "chrome",
+            Some("https://youtube.com/watch?v=abc123".to_string()),
+            Some("Rust Async Deep Dive - YouTube".to_string()),
+        ),
+        100.4,
+    )
+    .await
+    .unwrap();
+
+    sm.handle_window_change(Some(WindowInfo::new("kitty", "zsh")), 105.0)
+        .await
+        .unwrap();
+
+    let returned_id = sm
+        .handle_window_change(Some(pwa_win), 110.0)
+        .await
+        .unwrap()
+        .unwrap();
+    let returned_row = db.get_session(returned_id).await.unwrap().unwrap();
+    assert_eq!(
+        returned_row.website_url.as_deref(),
+        Some("https://youtube.com/watch?v=abc123")
+    );
+    assert_eq!(
+        returned_row.app_title.as_deref(),
+        Some("Rust Async Deep Dive - YouTube")
+    );
+}
+
+#[tokio::test]
 async fn test_incognito_after_normal_chrome_and_non_browser_does_not_leak_url_or_title() {
     let dir = tempdir().expect("Failed to create tempdir");
     let db_path = dir.path().join("test_incognito_no_leak.db");
