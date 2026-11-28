@@ -38,6 +38,9 @@ jobs:
       - name: Run workspace unit and integration tests
         run: cargo test --workspace --verbose
 
+      - name: Run browser extension unit tests
+        run: node --test tests/browser_extension_tests.mjs
+
   e2e-wayland:
     name: "Tier 1: Wayland E2E Protocol Test (Sway Headless)"
     runs-on: ubuntu-latest

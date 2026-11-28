@@ -13,6 +13,9 @@ const ALARM_INTERVAL_MINUTES = 1.0; // ~60 seconds
 let port = null;
 let currentUrl = null;
 let currentTitle = null;
+let nextSeq = 0;
+let lastAppliedSeq = 0;
+let pendingForceSeq = 0;
 
 // ── Native Messaging Connection ──────────────────────────────────────
 
@@ -96,68 +99,88 @@ function extractUrl(url) {
 
 function extractTitle(tabTitle, url) {
   if (!tabTitle) return url;
-  // Remove common suffixes like " - Google Chrome"
-  return tabTitle
+  const cleaned = tabTitle
     .replace(/\s*[-–—]\s*Google Chrome\s*$/i, "")
     .trim();
+  return cleaned || url;
 }
 
 // ── Tab Tracking ─────────────────────────────────────────────────────
 
-async function updateCurrentTab() {
-  try {
-    const [tab] = await chrome.tabs.query({
-      active: true,
-      currentWindow: true,
-    });
+function publishTab(tab, { force = false } = {}) {
+  if (!tab || !tab.url) {
+    return;
+  }
 
-    if (!tab || !tab.url) {
-      return;
-    }
+  const url = extractUrl(tab.url);
+  const title = extractTitle(tab.title, url);
 
-    const url = extractUrl(tab.url);
-    const title = extractTitle(tab.title, url);
-
-    // Only send update if domain changed
-    if (url !== currentUrl || title !== currentTitle) {
-      currentUrl = url;
-      currentTitle = title;
-      sendUrlUpdate(url, title);
-    }
-  } catch (e) {
-    console.error("Failed to query active tab:", e);
+  if (force || url !== currentUrl || title !== currentTitle) {
+    currentUrl = url;
+    currentTitle = title;
+    sendUrlUpdate(url, title);
   }
 }
 
-// Tab activated (user switched tabs)
-chrome.tabs.onActivated.addListener((_activeInfo) => {
-  updateCurrentTab();
-});
-
-// Tab updated (page loaded, URL changed, title changed)
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.url || changeInfo.title) {
-    // Only process if this is the active tab
-    if (tab.active) {
-      const url = extractUrl(tab.url);
-      const title = extractTitle(tab.title, url);
-
-      if (url !== currentUrl || title !== currentTitle) {
-        currentUrl = url;
-        currentTitle = title;
-        sendUrlUpdate(url, title);
-      }
-    }
+async function syncFocusedWindow({ windowId = null, force = false } = {}) {
+  const seq = ++nextSeq;
+  if (force) {
+    pendingForceSeq = seq;
   }
+  try {
+    const win =
+      windowId != null
+        ? await chrome.windows.get(windowId, { populate: true })
+        : await chrome.windows.getLastFocused({
+            populate: true,
+            windowTypes: ["normal", "popup", "app"],
+          });
+    if (seq <= lastAppliedSeq) {
+      return;
+    }
+    if (!win || !win.focused) {
+      if (seq === pendingForceSeq) {
+        pendingForceSeq = 0;
+      }
+      return;
+    }
+    lastAppliedSeq = seq;
+    const shouldForce =
+      force || (pendingForceSeq > 0 && pendingForceSeq <= seq);
+    if (pendingForceSeq <= seq) {
+      pendingForceSeq = 0;
+    }
+    const tab = win.tabs?.find((t) => t.active);
+    publishTab(tab, { force: shouldForce });
+  } catch (e) {
+    if (seq === pendingForceSeq) {
+      pendingForceSeq = 0;
+    }
+    console.error("Failed to sync focused window:", e);
+  }
+}
+
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  syncFocusedWindow({ windowId: activeInfo?.windowId ?? null });
 });
 
-// Window focus changed
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+  if (
+    (!changeInfo.url && !changeInfo.title && changeInfo.status !== "complete") ||
+    !tab?.active ||
+    tab.windowId == null
+  ) {
+    return;
+  }
+  syncFocusedWindow({ windowId: tab.windowId });
+});
+
 chrome.windows.onFocusChanged.addListener((windowId) => {
   if (windowId !== chrome.windows.WINDOW_ID_NONE) {
-    updateCurrentTab();
+    syncFocusedWindow({ windowId, force: true });
   } else {
-    // We lost focus to an Incognito window or another app.
-    // Explicitly clear the tracked URL state.
+    lastAppliedSeq = ++nextSeq;
+    pendingForceSeq = 0;
     currentUrl = null;
     currentTitle = null;
     sendUrlUpdate(null, null);
@@ -174,7 +197,7 @@ chrome.alarms.create(ALARM_NAME, {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
-    updateCurrentTab();
+    syncFocusedWindow({ force: true });
   }
 });
 
@@ -182,6 +205,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 // Connect to native host and send initial URL on service worker start
 connectNativeHost();
-updateCurrentTab();
+syncFocusedWindow();
 
 console.log("ScreenTime extension background service worker started");

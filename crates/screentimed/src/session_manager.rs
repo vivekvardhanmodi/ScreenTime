@@ -36,6 +36,18 @@ pub fn is_browser_app(app_class: &str) -> bool {
     browser_family_from_tokens(&app_class.to_lowercase()).is_some()
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CachedBrowserState {
+    url: String,
+    title: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SessionStartMode {
+    WindowSwitch,
+    Resume,
+}
+
 pub struct SessionManager {
     db: DbActorHandle,
     title_rules: TitleRulesCache,
@@ -54,7 +66,9 @@ pub struct SessionManager {
     has_external_display: bool,
     sleep_rx: Option<mpsc::Receiver<SleepEvent>>,
     last_heartbeat: f64,
-    browser_urls: HashMap<String, String>,
+    browser_state_by_class: HashMap<String, CachedBrowserState>,
+    pending_browser_state_by_family: HashMap<String, CachedBrowserState>,
+    last_browser_window_by_family: HashMap<&'static str, WindowInfo>,
     chrome_window_class: String,
     firefox_window_class: String,
     heartbeat_interval: Duration,
@@ -81,7 +95,9 @@ impl SessionManager {
             has_external_display: false,
             sleep_rx: None,
             last_heartbeat: 0.0,
-            browser_urls: HashMap::new(),
+            browser_state_by_class: HashMap::new(),
+            pending_browser_state_by_family: HashMap::new(),
+            last_browser_window_by_family: HashMap::new(),
             chrome_window_class: "google-chrome".to_string(),
             firefox_window_class: "firefox".to_string(),
             heartbeat_interval: Duration::from_secs(10),
@@ -175,11 +191,45 @@ impl SessionManager {
         }
     }
 
-    fn store_browser_url(&mut self, source_key: &str, url: Option<String>) {
+    fn normalize_title(title: Option<&str>) -> Option<String> {
+        title
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(ToString::to_string)
+    }
+
+    fn merge_cached_state(
+        existing: Option<&CachedBrowserState>,
+        url: String,
+        title: Option<String>,
+    ) -> CachedBrowserState {
+        let preserved_title = existing
+            .filter(|prev| prev.url == url)
+            .and_then(|prev| prev.title.clone());
+        CachedBrowserState {
+            url,
+            title: title.or(preserved_title),
+        }
+    }
+
+    fn store_pending_browser_state(
+        &mut self,
+        source_key: &str,
+        url: Option<String>,
+        title: Option<String>,
+    ) {
         if let Some(u) = url {
-            self.browser_urls.insert(source_key.to_string(), u);
+            let merged = Self::merge_cached_state(
+                self.pending_browser_state_by_family.get(source_key),
+                u,
+                title,
+            );
+            self.pending_browser_state_by_family
+                .insert(source_key.to_string(), merged);
+        } else if source_key == "browser" {
+            self.pending_browser_state_by_family.clear();
         } else {
-            self.browser_urls.remove(source_key);
+            self.pending_browser_state_by_family.remove(source_key);
         }
     }
 
@@ -285,24 +335,54 @@ impl SessionManager {
         Ok(())
     }
 
-    async fn start_session(&mut self, win: WindowInfo, now: f64) -> Result<i64, DbError> {
+    async fn start_session(
+        &mut self,
+        win: WindowInfo,
+        now: f64,
+        mode: SessionStartMode,
+    ) -> Result<i64, DbError> {
         self.maybe_reload_title_rules(now).await;
 
         let effective_class = self
             .title_rules
             .resolve_app_class(&win.app_class, Some(&win.title));
 
-        let initial_url = self
-            .browser_family_for_class(&win.app_class)
-            .and_then(|family| {
-                self.browser_urls
-                    .get(family)
-                    .or_else(|| self.browser_urls.get("browser"))
-                    .cloned()
-            });
+        let initial_state =
+            self.browser_family_for_class(&win.app_class)
+                .and_then(|family| {
+                    let family_pending = self.pending_browser_state_by_family.remove(family);
+                    let generic_pending = self.pending_browser_state_by_family.remove("browser");
+                    let pending = family_pending.or(generic_pending);
+                    let same_browser_window = self
+                        .last_browser_window_by_family
+                        .insert(family, win.clone())
+                        .as_ref()
+                        == Some(&win);
+                    match mode {
+                        SessionStartMode::WindowSwitch => {
+                            if let Some(ref state) = pending {
+                                self.browser_state_by_class
+                                    .insert(win.app_class.clone(), state.clone());
+                                pending
+                            } else if same_browser_window {
+                                self.browser_state_by_class.get(&win.app_class).cloned()
+                            } else {
+                                self.browser_state_by_class.remove(&win.app_class);
+                                None
+                            }
+                        }
+                        SessionStartMode::Resume => pending
+                            .or_else(|| self.browser_state_by_class.get(&win.app_class).cloned()),
+                    }
+                });
+
+        let initial_url = initial_state.as_ref().map(|s| s.url.clone());
+        let initial_title = initial_state
+            .and_then(|s| s.title)
+            .unwrap_or_else(|| win.title.clone());
 
         let mut session = Session::new(now, now, effective_class.clone())
-            .with_title(win.title.clone())
+            .with_title(initial_title.clone())
             .with_device_id(self.device_id.clone());
 
         if let Some(ref u) = initial_url {
@@ -310,7 +390,7 @@ impl SessionManager {
         }
 
         let new_id = self.db.insert_session(session).await?;
-        self.current_title = Some(win.title.clone());
+        self.current_title = Some(initial_title);
         self.current_window = Some(win);
         self.current_effective_class = Some(effective_class);
         self.current_start_time = now;
@@ -327,7 +407,8 @@ impl SessionManager {
         }
 
         if let Some(win) = self.current_window.clone() {
-            self.start_session(win, now).await?;
+            self.start_session(win, now, SessionStartMode::Resume)
+                .await?;
         }
 
         Ok(())
@@ -383,7 +464,9 @@ impl SessionManager {
         };
 
         self.close_active_session(now).await?;
-        let new_id = self.start_session(win, now).await?;
+        let new_id = self
+            .start_session(win, now, SessionStartMode::WindowSwitch)
+            .await?;
         Ok(Some(new_id))
     }
 
@@ -409,14 +492,15 @@ impl SessionManager {
 
     pub async fn handle_url_update(&mut self, update: UrlUpdate, now: f64) -> Result<(), DbError> {
         let source_key = self.normalize_browser_source(&update.browser_type);
+        let trimmed_title = Self::normalize_title(update.title.as_deref());
 
         let Some(session_id) = self.current_session_id else {
-            self.store_browser_url(&source_key, update.url);
+            self.store_pending_browser_state(&source_key, update.url, trimmed_title);
             return Ok(());
         };
 
         if !self.is_tracking_active() || self.current_window.is_none() {
-            self.store_browser_url(&source_key, update.url);
+            self.store_pending_browser_state(&source_key, update.url, trimmed_title);
             return Ok(());
         }
 
@@ -426,13 +510,13 @@ impl SessionManager {
             .and_then(|win| self.browser_family_for_class(&win.app_class));
 
         let Some(active_family) = active_family else {
-            self.store_browser_url(&source_key, update.url);
+            self.store_pending_browser_state(&source_key, update.url, trimmed_title);
             return Ok(());
         };
 
         // Ignore updates from a different browser family while buffering them for later focus
         if source_key != "browser" && source_key != active_family {
-            self.store_browser_url(&source_key, update.url);
+            self.store_pending_browser_state(&source_key, update.url, trimmed_title);
             return Ok(());
         }
 
@@ -442,8 +526,19 @@ impl SessionManager {
             source_key.as_str()
         };
 
+        let active_class = self
+            .current_window
+            .as_ref()
+            .map(|win| win.app_class.clone())
+            .unwrap_or_default();
+
+        self.pending_browser_state_by_family.remove(cache_key);
+        if cache_key != "browser" {
+            self.pending_browser_state_by_family.remove("browser");
+        }
+
         let Some(url) = update.url else {
-            self.store_browser_url(cache_key, None);
+            self.browser_state_by_class.remove(&active_class);
             if self.current_url.is_some() {
                 let win_clone = self.current_window.clone().unwrap();
                 let effective_class = self
@@ -468,14 +563,13 @@ impl SessionManager {
             return Ok(());
         };
 
-        self.store_browser_url(cache_key, Some(url.clone()));
-
-        let trimmed_title = update
-            .title
-            .as_deref()
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .map(ToString::to_string);
+        let merged_state = Self::merge_cached_state(
+            self.browser_state_by_class.get(&active_class),
+            url.clone(),
+            trimmed_title.clone(),
+        );
+        self.browser_state_by_class
+            .insert(active_class, merged_state.clone());
 
         if self.current_url.as_deref() == Some(&url) {
             if let Some(title) = trimmed_title {
@@ -492,7 +586,7 @@ impl SessionManager {
         let elapsed = now - self.current_start_time;
 
         if elapsed <= 2.0 && self.current_url.is_none() {
-            if let Some(title) = trimmed_title {
+            if let Some(title) = merged_state.title {
                 self.db
                     .update_session_title(session_id, title.clone())
                     .await?;
@@ -508,7 +602,7 @@ impl SessionManager {
                 .current_effective_class
                 .clone()
                 .unwrap_or_else(|| win_clone.app_class.clone());
-            let title = trimmed_title.unwrap_or(win_clone.title);
+            let title = merged_state.title.unwrap_or(win_clone.title);
 
             self.close_active_session(now).await?;
 
@@ -552,7 +646,8 @@ impl SessionManager {
             self.close_active_session(prev_hb).await?;
 
             if let Some(win) = self.current_window.clone() {
-                self.start_session(win, now).await?;
+                self.start_session(win, now, SessionStartMode::Resume)
+                    .await?;
             }
         } else if let Some(id) = self.current_session_id {
             self.db.update_end_time(id, now).await?;
